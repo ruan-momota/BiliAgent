@@ -350,17 +350,17 @@ uv sync  # 71个包，含 langchain 1.2.10, langgraph 1.0.10
 
 **目标：** 能成功获取B站@消息和视频字幕
 
-- [ ] 2.1 编写 `platforms/base.py`（PlatformBase抽象类）
-- [ ] 2.2 编写 `platforms/bilibili/client.py`（封装bilibili-api-python）
+- [x] 2.1 编写 `platforms/base.py`（PlatformBase抽象类）
+- [x] 2.2 编写 `platforms/bilibili/client.py`（封装bilibili-api-python）
   - `get_mentions()` — 获取@我的消息列表
   - `get_video_info(bvid)` — 获取视频标题、简介
   - `get_subtitles(bvid)` — 获取视频字幕
   - `post_comment(bvid, text)` — 发布评论
   - `reply_comment(bvid, root_id, text)` — 回复评论（盖楼用）
-- [ ] 2.3 编写 `platforms/bilibili/monitor.py`（轮询@消息服务）
-- [ ] 2.4 编写 `models/schemas.py`（Pydantic数据模型）
-- [ ] 2.5 手动测试：获取@消息列表、获取指定视频字幕、发一条测试评论
-- [ ] 2.6 编写 `storage/cache.py`（摘要缓存的增删查）
+- [x] 2.3 编写 `platforms/bilibili/monitor.py`（asyncio轮询@消息服务）
+- [x] 2.4 编写 `models/schemas.py`（Pydantic数据模型）
+- [ ] 2.5 手动测试：获取@消息列表、获取指定视频字幕、发一条测试评论（需填入真实Cookie）
+- [x] 2.6 编写 `storage/cache.py`（摘要缓存的增删查）
 
 **注意事项：**
 - bilibili-api-python 需要用 Credential 对象传入 Cookie（sessdata, bili_jct, buvid3）
@@ -371,28 +371,13 @@ uv sync  # 71个包，含 langchain 1.2.10, langgraph 1.0.10
 
 **目标：** 4个Agent各自能独立工作
 
-- [ ] 3.1 编写提示词模板 `prompts/*.txt`
-- [ ] 3.2 编写 `agents/supervisor.py`
-  - 输入：@消息内容
-  - LLM判断：是否为有效的总结请求
-  - 查询缓存：该视频是否已总结
-  - 输出：路由决策（use_cache / analyze / ignore）
-- [ ] 3.3 编写 `agents/analyzer.py`
-  - 输入：视频ID
-  - 调用平台API获取视频信息和字幕
-  - LLM判断：字幕质量是否足够生成摘要
-  - 输出：视频元数据 + 字幕文本 + 是否可总结
-- [ ] 3.4 编写 `agents/summarizer.py`
-  - 输入：视频标题、简介、字幕文本
-  - LLM生成结构化摘要
-  - 输出：摘要文本
-- [ ] 3.5 编写 `agents/reply.py`
-  - 输入：摘要文本（或错误信息）
-  - LLM格式化为B站评论风格
-  - 判断是否需要盖楼，拆分内容
-  - 调用平台API发布评论
-  - 输出：发布结果
-- [ ] 3.6 单独测试每个Agent（mock输入，验证输出）
+- [x] 3.1 编写提示词模板 `prompts/*.txt`（4个模板）
+- [x] 3.2 编写 `agents/__init__.py`（LLM工厂 + 提示词加载）
+- [x] 3.3 编写 `agents/supervisor.py`（意图判断 + 缓存查询 + 路由）
+- [x] 3.4 编写 `agents/analyzer.py`（视频信息 + 字幕 + 可总结性评估）
+- [x] 3.5 编写 `agents/summarizer.py`（摘要生成 + 硬截断兜底）
+- [x] 3.6 编写 `agents/reply.py`（格式化 + 盖楼拆分 + 发评论）
+- [x] 3.7 验证全部 Agent 导入和 LLM 初始化正常
 
 **Supervisor 提示词核心逻辑：**
 ```
@@ -420,77 +405,69 @@ uv sync  # 71个包，含 langchain 1.2.10, langgraph 1.0.10
 
 **目标：** 把4个Agent串成完整的工作流
 
-- [ ] 4.1 编写 `graph/state.py`（定义工作流状态 TypedDict）
-  ```python
-  class AgentState(TypedDict):
-      mention: MentionInfo          # @消息信息
-      video_id: str                 # 视频ID
-      route: str                    # 路由决策
-      video_info: VideoInfo | None  # 视频元数据
-      subtitles: str | None         # 字幕文本
-      has_subtitles: bool           # 是否有字幕
-      summary: str | None           # 生成的摘要
-      reply_parts: list[str]        # 评论内容（可能多条/盖楼）
-      error: str | None             # 错误信息
-      traces: list[AgentTrace]      # 各Agent节点的执行记录（供追溯）
-  ```
-- [ ] 4.2 编写 `graph/workflow.py`（StateGraph编排）
-  - 定义节点：supervisor_node, analyzer_node, summarizer_node, reply_node
-  - 定义条件边：基于 `route` 字段做分支
-  - 编译图：`graph.compile()`
-- [ ] 4.3 集成测试：手动构造一条@消息，走完整个工作流
-- [ ] 4.4 集成Monitor：Monitor检测到新@消息后触发工作流
+- [x] 4.1 编写 `graph/state.py`（AgentState TypedDict，含 traces 追溯字段）
+- [x] 4.2 编写 `graph/workflow.py`（StateGraph 4节点 + 2条件路由，含 trace 记录）
+- [x] 4.3 集成 Monitor → handle_mention → workflow.ainvoke
+- [x] 4.4 验证图编译：6节点（__start__, supervisor, analyzer, summarizer, reply, __end__）
 
 ### Phase 5：MVP联调 + 端到端测试（第10-11天）
 
 **目标：** 完整跑通"检测@→总结→回复"流程
 
-- [ ] 5.1 启动FastAPI服务 + Monitor轮询
-- [ ] 5.2 用小号在B站@主账号，验证完整流程
+- [x] 5.1 启动FastAPI服务 + Monitor轮询 + /health 返回 monitor_running
+- [ ] 5.2 用小号在B站@主账号，验证完整流程（需填入真实Cookie和LLM API Key）
 - [ ] 5.3 测试场景：
-  - ✅ 正常视频（有字幕）→ 应生成摘要并评论
-  - ✅ 无字幕视频 → 应回复无法总结的原因
-  - ✅ 重复@同一视频 → 应命中缓存，直接回复
-  - ✅ 非总结请求的@ → 应忽略
-  - ✅ 超长摘要 → 应自动盖楼
+  - 正常视频（有字幕）→ 应生成摘要并评论
+  - 无字幕视频 → 应回复无法总结的原因
+  - 重复@同一视频 → 应命中缓存，直接回复
+  - 非总结请求的@ → 应忽略
+  - 超长摘要 → 应自动盖楼
 - [ ] 5.4 修复bug，调整提示词
-- [ ] 5.5 添加日志输出（英文log），便于排查问题
-- [ ] 5.6 编写 API 路由：`GET /api/tasks`（任务列表）、`GET /api/stats`（统计）
+- [x] 5.5 全链路英文日志（每个 Agent 节点 + Monitor + Workflow）
+- [x] 5.6 API 路由完整实现：
+  - `GET /api/tasks` — 任务列表（支持分页、状态筛选）
+  - `GET /api/tasks/{id}` — 任务详情（含 traces + comments + summary 完整追溯）
+  - `GET /api/stats` — 统计概览
+  - `GET /api/summaries` — 摘要缓存列表
+  - `DELETE /api/summaries/{id}` — 删除摘要缓存
+  - `POST /api/test/trigger` — 手动触发工作流（开发测试用，不依赖真实@消息）
 
 ### Phase 6：Dashboard开发（第12-15天）
 
 **目标：** 可视化监控面板
 
-- [ ] 6.1 在 `dashboard/` 下用 `npx create-next-app@latest` 初始化 Next.js 项目
-- [ ] 6.2 安装 shadcn/ui + Tailwind CSS
-- [ ] 6.3 开发Dashboard页面：
-  - **首页概览**：统计卡片（总任务数、成功率、今日处理数）
+- [x] 6.1 在 `dashboard/` 下用 `npx create-next-app@latest` 初始化 Next.js 项目
+- [x] 6.2 安装 shadcn/ui + Tailwind CSS
+- [x] 6.3 开发Dashboard页面：
+  - **首页概览**：统计卡片（总任务数、成功率、今日处理数、Cookie状态）
   - **任务列表**：状态、视频标题、时间，可点击进入详情
   - **任务详情页（重点）**：追溯每个任务的完整生成过程
-    - 原始@消息内容
-    - Supervisor的路由决策结果
-    - Analyzer提取的视频信息和字幕（摘录）
-    - Summarizer生成的摘要原文
+    - Agent Trace 时间线（每个节点的 Input/Output JSON、耗时、状态）
+    - 生成的摘要原文
     - Reply Agent最终发布的评论内容
-    - 每个Agent节点的执行耗时
     - 错误信息（如有）
   - **摘要缓存管理**：查看/删除已缓存的摘要
-  - **Agent运行状态**：Monitor在线状态、最近一次轮询时间
-- [ ] 6.4 后端新增API：`GET /api/tasks/{id}/trace`（任务全链路追溯）
-- [ ] 6.5 对接后端API（使用SWR做数据轮询刷新）
-- [ ] 6.6 联调测试
+- [x] 6.4 后端API完整实现（任务详情含 traces/comments/summary 完整追溯）
+- [x] 6.5 对接后端API（使用SWR做数据轮询刷新）
+- [x] 6.6 联调测试
 
 ### Phase 7：优化与加固（第16-18天）
 
 **目标：** 生产级质量
 
-- [ ] 7.1 异常处理完善（网络超时、API限流、Cookie过期等）
-- [ ] 7.2 Cookie过期检测与告警
-- [ ] 7.3 评论发送频率控制（每条评论间隔≥30秒）
-- [ ] 7.4 字幕文本截断策略（超长字幕只取前15000字符送LLM）
-- [ ] 7.5 添加单元测试（核心Agent逻辑）
-- [ ] 7.6 添加集成测试（Mock B站API）
-- [ ] 7.7 编写 README.md
+- [x] 7.1 异常处理完善（网络超时、API限流、Cookie过期等）
+- [x] 7.2 Cookie过期检测与告警
+- [x] 7.3 评论发送频率控制（每条评论间隔≥30秒）
+- [x] 7.4 字幕文本截断策略（超长字幕只取前15000字符送LLM）
+- [x] 7.5 添加单元测试（核心Agent逻辑）
+- [x] 7.6 添加集成测试（Mock B站API）
+- [x] 7.7 编写 README.md
+
+**实现记录：**
+- 7.1: `invoke_llm_with_retry()` — 最多3次重试，指数退避(2s/4s/8s)，识别 timeout/429/5xx；LLM 请求超时 60s
+- 7.2: `check_credential()` 启动时检测 + 运行中自动感知；Dashboard Cookie Status 卡片 + 红色告警横幅
+- 7.5+7.6: 49 个测试全部通过（24 单元 + 25 集成）
+- 7.7: 完整 README.md
 
 ---
 

@@ -4,7 +4,7 @@ import logging
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from biliagent.agents import create_llm, load_prompt
+from biliagent.agents import create_llm, invoke_llm_with_retry, load_prompt
 from biliagent.config import settings
 
 logger = logging.getLogger("biliagent.agent.summarizer")
@@ -14,7 +14,7 @@ class SummarizerAgent:
     """生成 Agent：根据视频标题、简介、字幕生成摘要"""
 
     def __init__(self) -> None:
-        self._llm = create_llm("summarizer", temperature=0.7)
+        self._llm = create_llm("summarizer", temperature=1)
         self._prompt_template = load_prompt("summarizer")
         self._max_length = settings.app.summary_max_length
 
@@ -43,8 +43,7 @@ class SummarizerAgent:
             HumanMessage(content="请生成视频摘要。"),
         ]
 
-        response = await self._llm.ainvoke(messages)
-        summary = response.content.strip()
+        summary = await invoke_llm_with_retry(self._llm, messages, "summarizer")
 
         # 后处理：硬截断兜底
         if len(summary) > self._max_length:

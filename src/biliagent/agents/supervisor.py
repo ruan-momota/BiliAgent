@@ -5,7 +5,7 @@ import logging
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from biliagent.agents import create_llm, load_prompt
+from biliagent.agents import create_llm, invoke_llm_with_retry, load_prompt
 from biliagent.storage.cache import get_cached_summary
 
 logger = logging.getLogger("biliagent.agent.supervisor")
@@ -15,7 +15,7 @@ class SupervisorAgent:
     """调度 Agent：判断@消息是否为有效总结请求，查缓存决定路由"""
 
     def __init__(self) -> None:
-        self._llm = create_llm("supervisor", temperature=0.1)
+        self._llm = create_llm("supervisor", temperature=1)
         self._prompt_template = load_prompt("supervisor")
 
     async def run(
@@ -55,8 +55,8 @@ class SupervisorAgent:
             HumanMessage(content=f"用户 @消息原文：{content}"),
         ]
 
-        response = await self._llm.ainvoke(messages)
-        result = self._parse_response(response.content)
+        text = await invoke_llm_with_retry(self._llm, messages, "supervisor")
+        result = self._parse_response(text)
 
         if result.get("action") == "ignore":
             logger.info("Mention ignored: %s", result.get("reason"))

@@ -88,3 +88,4 @@ class StatsResponse(BaseModel):
     success_rate: float
     total_summaries: int
     today_tasks: int
+    credential_valid: bool | None = None  # B站 Cookie 状态：True/False/None(未检测)

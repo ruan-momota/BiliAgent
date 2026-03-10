@@ -1,10 +1,10 @@
 """BiliAgent — FastAPI 应用入口"""
 
-import json
 import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from biliagent.api.routes import router
 from biliagent.graph.workflow import build_workflow
@@ -13,6 +13,7 @@ from biliagent.platforms.bilibili.client import BilibiliPlatform
 from biliagent.platforms.bilibili.monitor import MentionMonitor
 from biliagent.storage.database import (
     AgentTrace,
+    Comment,
     Task,
     async_session,
     init_db,
@@ -59,9 +60,15 @@ async def handle_mention(mention: MentionInfo) -> None:
         initial_state = {"mention": mention, "traces": []}
         result = await workflow.ainvoke(initial_state)
 
-        success = result.get("success", False)
-        error = result.get("error")
-        status = "completed" if success else "failed"
+        route = result.get("route", "")
+        if route == "ignore":
+            # 非总结请求，标记为忽略（不算失败）
+            status = "completed"
+            error = result.get("error")
+        else:
+            success = result.get("success", False)
+            error = result.get("error")
+            status = "completed" if success else "failed"
 
         logger.info("Workflow finished for task %d: status=%s", task_id, status)
     except Exception as e:
@@ -90,6 +97,19 @@ async def handle_mention(mention: MentionInfo) -> None:
                 )
                 session.add(trace)
 
+            # 保存评论记录
+            reply_parts = result.get("reply_parts", [])
+            comment_ids = result.get("comment_ids", [])
+            for i, part in enumerate(reply_parts):
+                comment = Comment(
+                    task_id=task_id,
+                    platform=mention.platform,
+                    comment_id=comment_ids[i] if i < len(comment_ids) else None,
+                    content=part,
+                    floor_number=i + 1,
+                )
+                session.add(comment)
+
             await session.commit()
 
 
@@ -99,6 +119,13 @@ async def lifespan(app: FastAPI):
     logger.info("Initializing database...")
     await init_db()
     logger.info("Database initialized.")
+
+    # 启动时检测 Cookie 有效性
+    credential_ok = await platform.check_credential()
+    if credential_ok:
+        logger.info("Bilibili credential check passed.")
+    else:
+        logger.warning("Bilibili credential may be invalid! Check your Cookie.")
 
     # 启动 Monitor 轮询
     monitor.set_callback(handle_mention)
@@ -119,13 +146,22 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 app.include_router(router, prefix="/api")
 
 
 @app.get("/health")
 async def health_check():
+    credential_status = platform.credential_valid
     return {
         "status": "ok",
         "service": "biliagent",
         "monitor_running": monitor.is_running,
+        "credential_valid": credential_status,
     }

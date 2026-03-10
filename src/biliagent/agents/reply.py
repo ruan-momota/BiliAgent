@@ -5,7 +5,7 @@ import logging
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from biliagent.agents import create_llm, load_prompt
+from biliagent.agents import create_llm, invoke_llm_with_retry, load_prompt
 from biliagent.config import settings
 from biliagent.platforms.base import PlatformBase
 
@@ -16,7 +16,7 @@ class ReplyAgent:
     """回复 Agent：格式化摘要为评论并发布，超长时盖楼"""
 
     def __init__(self, platform: PlatformBase) -> None:
-        self._llm = create_llm("reply", temperature=0.3)
+        self._llm = create_llm("reply", temperature=1)
         self._prompt_template = load_prompt("reply")
         self._platform = platform
         self._max_length = settings.app.summary_max_length
@@ -53,8 +53,7 @@ class ReplyAgent:
             HumanMessage(content="请生成最终评论文本。"),
         ]
 
-        response = await self._llm.ainvoke(messages)
-        formatted_text = response.content.strip()
+        formatted_text = await invoke_llm_with_retry(self._llm, messages, "reply")
 
         # 2. 拆分（盖楼兜底）
         parts = self._split_comment(formatted_text)

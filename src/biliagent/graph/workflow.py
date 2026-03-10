@@ -238,11 +238,17 @@ def build_workflow(platform: PlatformBase) -> StateGraph:
     """
     graph = StateGraph(AgentState)
 
-    # 注册节点（用 lambda 注入 platform 依赖）
+    # 注册节点（用 async 闭包注入 platform 依赖）
+    async def _analyzer(state: AgentState) -> AgentState:
+        return await analyzer_node(state, platform)
+
+    async def _reply(state: AgentState) -> AgentState:
+        return await reply_node(state, platform)
+
     graph.add_node("supervisor", supervisor_node)
-    graph.add_node("analyzer", lambda state: analyzer_node(state, platform))
+    graph.add_node("analyzer", _analyzer)
     graph.add_node("summarizer", summarizer_node)
-    graph.add_node("reply", lambda state: reply_node(state, platform))
+    graph.add_node("reply", _reply)
 
     # 边：START → supervisor
     graph.add_edge(START, "supervisor")

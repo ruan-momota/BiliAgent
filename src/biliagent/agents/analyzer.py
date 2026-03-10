@@ -5,7 +5,7 @@ import logging
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from biliagent.agents import create_llm, load_prompt
+from biliagent.agents import create_llm, invoke_llm_with_retry, load_prompt
 from biliagent.models.schemas import VideoInfo
 from biliagent.platforms.base import PlatformBase
 
@@ -16,7 +16,7 @@ class AnalyzerAgent:
     """分析 Agent：获取视频元数据和字幕，用 LLM 评估是否可生成摘要"""
 
     def __init__(self, platform: PlatformBase) -> None:
-        self._llm = create_llm("analyzer", temperature=0.1)
+        self._llm = create_llm("analyzer", temperature=1)
         self._prompt_template = load_prompt("analyzer")
         self._platform = platform
 
@@ -61,8 +61,8 @@ class AnalyzerAgent:
             HumanMessage(content="请评估这个视频是否可以生成摘要。"),
         ]
 
-        response = await self._llm.ainvoke(messages)
-        result = self._parse_response(response.content)
+        text = await invoke_llm_with_retry(self._llm, messages, "analyzer")
+        result = self._parse_response(text)
 
         verdict = result.get("result", "")
 

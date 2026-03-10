@@ -24,10 +24,44 @@ class BilibiliPlatform(PlatformBase):
             bili_jct=settings.bili.bili_jct,
             buvid3=settings.bili.buvid3,
         )
+        # Cookie 有效性状态（供健康检查使用）
+        self._credential_valid: bool | None = None  # None = 未检测
 
     @property
     def name(self) -> str:
         return "bilibili"
+
+    @property
+    def credential_valid(self) -> bool | None:
+        """Cookie 是否有效（None 表示尚未检测）"""
+        return self._credential_valid
+
+    # ---- Cookie 有效性检测 ----
+    async def check_credential(self) -> bool:
+        """检测 Cookie 是否仍然有效（调用B站导航接口）"""
+        try:
+            result = await self._credential.check_valid()
+            self._credential_valid = result
+            if not result:
+                logger.warning("Bilibili credential is INVALID (expired or revoked)")
+            else:
+                logger.debug("Bilibili credential check passed")
+            return result
+        except Exception:
+            # check_valid 方法不可用时，尝试用 get_at 做轻量检测
+            try:
+                await get_at(credential=self._credential)
+                self._credential_valid = True
+                return True
+            except Exception as e:
+                error_str = str(e).lower()
+                if "login" in error_str or "expire" in error_str or "-101" in error_str:
+                    self._credential_valid = False
+                    logger.warning("Bilibili credential expired: %s", e)
+                    return False
+                # 其它错误（如网络问题）不改变状态
+                logger.warning("Credential check inconclusive: %s", e)
+                return self._credential_valid is not False
 
     # ---- @消息 ----
     async def get_mentions(self, last_id: str | None = None) -> list[MentionInfo]:
@@ -40,13 +74,17 @@ class BilibiliPlatform(PlatformBase):
             result = await get_at(credential=self._credential, **params)
             items = result.get("items", [])
 
+            # 能拿到结果说明 Cookie 有效
+            self._credential_valid = True
+
             mentions: list[MentionInfo] = []
             for item in items:
                 mention = self._parse_mention(item)
                 if mention is not None:
                     mentions.append(mention)
             return mentions
-        except Exception:
+        except Exception as e:
+            self._detect_credential_error(e)
             logger.exception("Failed to fetch mentions")
             return []
 
@@ -178,7 +216,7 @@ class BilibiliPlatform(PlatformBase):
         """下载字幕 JSON，拼接成纯文本"""
         try:
             async with httpx.AsyncClient() as client:
-                resp = await client.get(url, timeout=10)
+                resp = await client.get(url, timeout=15)
                 resp.raise_for_status()
                 data = resp.json()
 
@@ -186,6 +224,9 @@ class BilibiliPlatform(PlatformBase):
             body = data.get("body", [])
             lines = [item.get("content", "") for item in body if item.get("content")]
             return "\n".join(lines) if lines else None
+        except httpx.TimeoutException:
+            logger.error("Timeout fetching subtitle from %s", url)
+            return None
         except Exception:
             logger.exception("Failed to fetch subtitle from %s", url)
             return None
@@ -211,7 +252,8 @@ class BilibiliPlatform(PlatformBase):
             rpid = result.get("rpid")
             logger.info("Comment posted on video %s, rpid=%s", video_id, rpid)
             return str(rpid) if rpid else None
-        except Exception:
+        except Exception as e:
+            self._detect_credential_error(e)
             logger.exception("Failed to post comment on video %s", video_id)
             return None
 
@@ -237,7 +279,8 @@ class BilibiliPlatform(PlatformBase):
             rpid = result.get("rpid")
             logger.info("Reply posted on video %s under %s, rpid=%s", video_id, root_comment_id, rpid)
             return str(rpid) if rpid else None
-        except Exception:
+        except Exception as e:
+            self._detect_credential_error(e)
             logger.exception("Failed to reply comment on video %s", video_id)
             return None
 
@@ -251,3 +294,10 @@ class BilibiliPlatform(PlatformBase):
         else:
             # 尝试当作 BV 号处理
             return Video(bvid=video_id, credential=self._credential)
+
+    def _detect_credential_error(self, e: Exception) -> None:
+        """从异常信息中检测 Cookie 是否已过期"""
+        error_str = str(e).lower()
+        if any(kw in error_str for kw in ["login", "expire", "-101", "credential", "csrf"]):
+            self._credential_valid = False
+            logger.error("Credential appears expired or invalid: %s", e)
