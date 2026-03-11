@@ -22,10 +22,16 @@ class ReplyAgent:
         self._max_length = settings.app.summary_max_length
         self._send_interval = settings.app.comment_send_interval
 
+    # 傲娇话术模板
+    _SUMMARY_HEADER = "哼，既然你都诚心诚意地召唤我了，那我就大发慈悲地给你总结一下吧！"
+    _SUMMARY_FOOTER = "（拿走不谢！下次还要找我哦~ [傲娇]）"
+    _ERROR_HEADER = "呜…这个视频我也没办法总结啦，不是我不想帮你！"
+
     async def run(
         self,
         video_id: str,
         title: str,
+        user_name: str = "",
         summary: str | None = None,
         is_error: bool = False,
         error_reason: str | None = None,
@@ -39,7 +45,7 @@ class ReplyAgent:
                 "success": bool,
             }
         """
-        # 1. 用 LLM 格式化回复
+        # 1. 用 LLM 格式化回复内容
         prompt = self._prompt_template.format(
             title=title,
             summary=summary or "",
@@ -55,11 +61,22 @@ class ReplyAgent:
 
         formatted_text = await invoke_llm_with_retry(self._llm, messages, "reply")
 
-        # 2. 拆分（盖楼兜底）
+        # 2. 包裹 @用户名 + 傲娇话术
+        at_prefix = f"@{user_name} " if user_name else ""
+        if is_error:
+            formatted_text = f"{at_prefix}{self._ERROR_HEADER}"
+        else:
+            formatted_text = (
+                f"{at_prefix}{self._SUMMARY_HEADER}\n\n"
+                f"{formatted_text}\n\n"
+                f"{self._SUMMARY_FOOTER}"
+            )
+
+        # 3. 拆分（盖楼兜底）
         parts = self._split_comment(formatted_text)
         logger.info("Reply formatted into %d part(s)", len(parts))
 
-        # 3. 发布评论
+        # 4. 发布评论
         comment_ids: list[str | None] = []
         root_id: str | None = None
 

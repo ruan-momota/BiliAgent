@@ -173,10 +173,14 @@ async def reply_node(state: AgentState, platform: PlatformBase) -> AgentState:
         is_error = summary is None
         error_reason = state.get("error") if is_error else None
 
+        mention = state["mention"]
+        user_name = mention.user_name or ""
+
         agent = ReplyAgent(platform)
         result = await agent.run(
             video_id=video_id,
             title=title,
+            user_name=user_name,
             summary=summary,
             is_error=is_error,
             error_reason=error_reason,

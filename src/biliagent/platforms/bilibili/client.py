@@ -6,6 +6,7 @@ import httpx
 from bilibili_api import Credential
 from bilibili_api.comment import CommentResourceType, send_comment
 from bilibili_api.session import get_at
+from bilibili_api.user import User
 from bilibili_api.video import Video
 
 from biliagent.config import settings
@@ -89,36 +90,47 @@ class BilibiliPlatform(PlatformBase):
             return []
 
     def _parse_mention(self, item: dict) -> MentionInfo | None:
-        """解析单条@消息，提取视频ID和用户信息"""
+        """解析单条@消息，提取视频ID和用户信息
+
+        B站 get_at() 返回结构：
+        {
+            "id": 123, "user": {"mid": ..., "nickname": ...},
+            "item": {"uri": "...", "subject_id": ..., "source_content": ...}
+        }
+        注意：uri/subject_id/source_content 等字段嵌套在 item.item 子对象中。
+        """
         try:
             item_id = str(item.get("id", ""))
             user = item.get("user", {})
             user_id = str(user.get("mid", ""))
             user_name = user.get("nickname", "")
 
-            # 从 item 中提取被@的视频信息
-            # at 消息的 item.source_content 包含原始评论内容
-            # item.uri 或 item.native_uri 包含视频链接
-            source_id = str(item.get("source_id", ""))
-            subject_id = str(item.get("subject_id", ""))
+            # B站 at 通知的详情字段在嵌套的 "item" 子对象中
+            detail = item.get("item", {})
 
-            # 尝试从 item 中获取视频 BV 号
-            # at 消息中 item_type 为 "video" 时 subject_id 是 aid
-            uri = item.get("uri", "")
-            native_uri = item.get("native_uri", "")
+            logger.debug(
+                "Parsing mention %s: detail keys=%s", item_id, list(detail.keys())
+            )
+
+            subject_id = str(detail.get("subject_id", ""))
+            uri = detail.get("uri", "")
+            native_uri = detail.get("native_uri", "")
 
             # 从 URI 中提取 BV 号（如 //www.bilibili.com/video/BV1xxxxx）
             video_id = self._extract_bvid(uri) or self._extract_bvid(native_uri)
 
             # 如果无法从 URI 获取 BV 号，尝试用 subject_id 作为 aid
-            if not video_id and subject_id:
+            if not video_id and subject_id and subject_id != "0":
                 video_id = f"aid:{subject_id}"
 
             if not video_id:
-                logger.warning("Cannot extract video_id from mention %s", item_id)
+                logger.warning(
+                    "Cannot extract video_id from mention %s, uri=%s, native_uri=%s, subject_id=%s",
+                    item_id, uri, native_uri, subject_id,
+                )
                 return None
 
-            content = item.get("source_content", "")
+            content = detail.get("source_content", "")
 
             return MentionInfo(
                 mention_id=item_id,
@@ -283,6 +295,31 @@ class BilibiliPlatform(PlatformBase):
             self._detect_credential_error(e)
             logger.exception("Failed to reply comment on video %s", video_id)
             return None
+
+    # ---- 关注关系检查 ----
+    async def check_is_follower(self, user_id: str) -> bool:
+        """检查指定用户是否关注了本账号
+
+        通过 B站用户关系 API 查询，be_relation.attribute 含义：
+        0=未关注, 1=悄悄关注, 2=已关注, 6=互相关注, 128=拉黑
+        attribute 为 1/2/6 时视为已关注。
+        """
+        try:
+            user = User(uid=int(user_id), credential=self._credential)
+            relation = await user.get_relation()
+            be_relation = relation.get("be_relation", {})
+            attribute = be_relation.get("attribute", 0)
+            is_follower = attribute in (1, 2, 6)
+            logger.info(
+                "Follower check: user=%s, attribute=%s, is_follower=%s",
+                user_id, attribute, is_follower,
+            )
+            return is_follower
+        except Exception as e:
+            self._detect_credential_error(e)
+            logger.exception("Failed to check follower status for user %s", user_id)
+            # 查询失败时默认放行，避免误拦截
+            return True
 
     # ---- 内部工具 ----
     def _make_video(self, video_id: str) -> Video:

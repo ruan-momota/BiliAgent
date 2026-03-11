@@ -85,6 +85,7 @@ class StatsResponse(BaseModel):
     total_tasks: int
     completed_tasks: int
     failed_tasks: int
+    not_follower_tasks: int = 0
     success_rate: float
     total_summaries: int
     today_tasks: int

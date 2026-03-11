@@ -22,7 +22,7 @@ class Task(Base):
     video_id: Mapped[str] = mapped_column(String)
     user_id: Mapped[str] = mapped_column(String)
     user_name: Mapped[str | None] = mapped_column(String, nullable=True)
-    status: Mapped[str] = mapped_column(String, default="pending")  # pending/processing/completed/failed
+    status: Mapped[str] = mapped_column(String, default="pending")  # pending/processing/completed/failed/not_follower
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime, server_default=func.now()

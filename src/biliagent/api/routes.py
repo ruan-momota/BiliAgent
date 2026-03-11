@@ -131,6 +131,12 @@ async def get_stats():
             await session.execute(select(func.count(Summary.id)))
         ).scalar() or 0
 
+        not_follower = (
+            await session.execute(
+                select(func.count(Task.id)).where(Task.status == "not_follower")
+            )
+        ).scalar() or 0
+
         today_start = datetime.datetime.now().replace(
             hour=0, minute=0, second=0, microsecond=0
         )
@@ -148,6 +154,7 @@ async def get_stats():
             total_tasks=total,
             completed_tasks=completed,
             failed_tasks=failed,
+            not_follower_tasks=not_follower,
             success_rate=round(completed / total, 4) if total > 0 else 0.0,
             total_summaries=summaries,
             today_tasks=today,

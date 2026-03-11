@@ -31,6 +31,11 @@ class AppSettings(BaseSettings):
     summary_max_length: int = Field(default=500, alias="SUMMARY_MAX_LENGTH")
     comment_send_interval: int = Field(default=30, alias="COMMENT_SEND_INTERVAL")
     subtitle_max_length: int = Field(default=15000, alias="SUBTITLE_MAX_LENGTH")
+    follower_check_enabled: bool = Field(default=True, alias="FOLLOWER_CHECK_ENABLED")
+    not_follower_reply: str = Field(
+        default="喂喂！连个关注都不点就想使唤我？[生气] 抓到一只企图白嫖野生总结的B友！快乖乖点上关注，不然本课代表要罢工啦！(〃＞目＜)",
+        alias="NOT_FOLLOWER_REPLY",
+    )
     database_url: str = Field(
         default="sqlite+aiosqlite:///./biliagent.db",
         alias="DATABASE_URL",

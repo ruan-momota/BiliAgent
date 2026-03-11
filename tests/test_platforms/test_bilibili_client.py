@@ -116,11 +116,13 @@ class TestParseMention:
         item = {
             "id": "123",
             "user": {"mid": "456", "nickname": "testuser"},
-            "uri": "https://www.bilibili.com/video/BV1test",
-            "native_uri": "",
-            "source_id": "789",
-            "subject_id": "101",
-            "source_content": "帮我总结一下",
+            "item": {
+                "uri": "https://www.bilibili.com/video/BV1test",
+                "native_uri": "",
+                "source_id": "789",
+                "subject_id": "101",
+                "source_content": "帮我总结一下",
+            },
         }
 
         result = platform._parse_mention(item)
@@ -128,6 +130,7 @@ class TestParseMention:
         assert result.mention_id == "123"
         assert result.video_id == "BV1test"
         assert result.user_name == "testuser"
+        assert result.content == "帮我总结一下"
 
     @patch("biliagent.platforms.bilibili.client.settings")
     def test_parse_mention_with_aid_fallback(self, mock_settings):
@@ -143,16 +146,119 @@ class TestParseMention:
         item = {
             "id": "123",
             "user": {"mid": "456", "nickname": "testuser"},
-            "uri": "https://example.com/no-video-here",
-            "native_uri": "",
-            "source_id": "789",
-            "subject_id": "999",
-            "source_content": "总结",
+            "item": {
+                "uri": "https://example.com/no-video-here",
+                "native_uri": "",
+                "source_id": "789",
+                "subject_id": "999",
+                "source_content": "总结",
+            },
         }
 
         result = platform._parse_mention(item)
         assert result is not None
         assert result.video_id == "aid:999"
+
+
+class TestCheckIsFollower:
+    """测试关注关系检查"""
+
+    @pytest.mark.asyncio
+    @patch("biliagent.platforms.bilibili.client.settings")
+    @patch("biliagent.platforms.bilibili.client.User")
+    @patch("biliagent.platforms.bilibili.client.Credential")
+    async def test_follower_attribute_2(self, mock_cred_cls, mock_user_cls, mock_settings):
+        """attribute=2 (已关注) → True"""
+        from biliagent.platforms.bilibili.client import BilibiliPlatform
+        mock_settings.bili.sessdata = "test"
+        mock_settings.bili.bili_jct = "test"
+        mock_settings.bili.buvid3 = "test"
+
+        platform = BilibiliPlatform.__new__(BilibiliPlatform)
+        platform._credential = MagicMock()
+        platform._credential_valid = None
+
+        mock_user_instance = AsyncMock()
+        mock_user_instance.get_relation.return_value = {
+            "be_relation": {"mid": 123, "attribute": 2},
+            "relation": {"mid": 123, "attribute": 0},
+        }
+        mock_user_cls.return_value = mock_user_instance
+
+        result = await platform.check_is_follower("123")
+        assert result is True
+
+    @pytest.mark.asyncio
+    @patch("biliagent.platforms.bilibili.client.settings")
+    @patch("biliagent.platforms.bilibili.client.User")
+    @patch("biliagent.platforms.bilibili.client.Credential")
+    async def test_follower_attribute_6_mutual(self, mock_cred_cls, mock_user_cls, mock_settings):
+        """attribute=6 (互相关注) → True"""
+        from biliagent.platforms.bilibili.client import BilibiliPlatform
+        mock_settings.bili.sessdata = "test"
+        mock_settings.bili.bili_jct = "test"
+        mock_settings.bili.buvid3 = "test"
+
+        platform = BilibiliPlatform.__new__(BilibiliPlatform)
+        platform._credential = MagicMock()
+        platform._credential_valid = None
+
+        mock_user_instance = AsyncMock()
+        mock_user_instance.get_relation.return_value = {
+            "be_relation": {"mid": 456, "attribute": 6},
+            "relation": {"mid": 456, "attribute": 2},
+        }
+        mock_user_cls.return_value = mock_user_instance
+
+        result = await platform.check_is_follower("456")
+        assert result is True
+
+    @pytest.mark.asyncio
+    @patch("biliagent.platforms.bilibili.client.settings")
+    @patch("biliagent.platforms.bilibili.client.User")
+    @patch("biliagent.platforms.bilibili.client.Credential")
+    async def test_not_follower_attribute_0(self, mock_cred_cls, mock_user_cls, mock_settings):
+        """attribute=0 (未关注) → False"""
+        from biliagent.platforms.bilibili.client import BilibiliPlatform
+        mock_settings.bili.sessdata = "test"
+        mock_settings.bili.bili_jct = "test"
+        mock_settings.bili.buvid3 = "test"
+
+        platform = BilibiliPlatform.__new__(BilibiliPlatform)
+        platform._credential = MagicMock()
+        platform._credential_valid = None
+
+        mock_user_instance = AsyncMock()
+        mock_user_instance.get_relation.return_value = {
+            "be_relation": {"mid": 789, "attribute": 0},
+            "relation": {"mid": 789, "attribute": 0},
+        }
+        mock_user_cls.return_value = mock_user_instance
+
+        result = await platform.check_is_follower("789")
+        assert result is False
+
+    @pytest.mark.asyncio
+    @patch("biliagent.platforms.bilibili.client.settings")
+    @patch("biliagent.platforms.bilibili.client.User")
+    @patch("biliagent.platforms.bilibili.client.Credential")
+    async def test_api_error_defaults_to_true(self, mock_cred_cls, mock_user_cls, mock_settings):
+        """API 异常时默认放行 → True"""
+        from biliagent.platforms.bilibili.client import BilibiliPlatform
+        mock_settings.bili.sessdata = "test"
+        mock_settings.bili.bili_jct = "test"
+        mock_settings.bili.buvid3 = "test"
+
+        platform = BilibiliPlatform.__new__(BilibiliPlatform)
+        platform._credential = MagicMock()
+        platform._credential_valid = True
+
+        mock_user_instance = AsyncMock()
+        mock_user_instance.get_relation.side_effect = Exception("network error")
+        mock_user_cls.return_value = mock_user_instance
+
+        result = await platform.check_is_follower("999")
+        assert result is True
 
 
 class TestCredentialDetection:

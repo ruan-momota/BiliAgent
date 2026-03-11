@@ -469,6 +469,37 @@ uv sync  # 71个包，含 langchain 1.2.10, langgraph 1.0.10
 - 7.5+7.6: 49 个测试全部通过（24 单元 + 25 集成）
 - 7.7: 完整 README.md
 
+### Phase 8：关注检查（权限拦截）
+
+**目标：** 仅为已关注本账号的用户提供视频总结服务，未关注用户收到引导关注提示
+
+**方案：** 前置拦截 — 在 `handle_mention()` 入口处检查关注关系，未关注者不进入 LangGraph 工作流，直接回复提示文案
+
+**处理流程：**
+```
+收到@消息 → 检查用户是否关注本账号
+  ├─ 未关注 → 直接回复"请关注后使用" → 任务标记 not_follower → END
+  └─ 已关注 → 进入正常 LangGraph 工作流（Supervisor → ...）
+```
+
+**回复文案（傲娇人设）：**
+- 已关注（总结回复）：`@用户名 哼，既然你都诚心诚意地召唤我了，那我就大发慈悲地给你总结一下吧！\n\n[总结内容]\n\n（拿走不谢！下次还要找我哦~ [傲娇]）`
+- 未关注（求关注）：`@用户名 喂喂！连个关注都不点就想使唤我？[生气] 抓到一只企图白嫖野生总结的B友！快乖乖点上关注，不然本课代表要罢工啦！(〃＞目＜)`
+
+- [ ] 8.1 `platforms/base.py` — 抽象基类新增 `check_is_follower(user_id: str) -> bool` 方法
+- [ ] 8.2 `platforms/bilibili/client.py` — 实现关注关系检查（调用 B站用户关系 API）
+- [ ] 8.3 `config.py` — 新增 `FOLLOWER_CHECK_ENABLED` 开关（默认开启）和 `NOT_FOLLOWER_REPLY` 回复文案配置
+- [ ] 8.4 `main.py` — `handle_mention()` 中 `workflow.ainvoke()` 之前插入关注检查逻辑
+- [ ] 8.5 `storage/database.py` — Task status 新增 `not_follower` 状态值
+- [ ] 8.6 `api/routes.py` — Dashboard 统计接口适配 `not_follower` 状态
+- [ ] 8.7 补充单元测试 + 集成测试
+- [ ] 8.8 端到端验证：用未关注小号@机器人，确认收到关注提示
+
+**设计要点：**
+- 不修改 LangGraph 图结构，关注检查为硬逻辑（非 LLM 判断）
+- 未关注用户不消耗 LLM API 配额
+- `FOLLOWER_CHECK_ENABLED=false` 可关闭此功能（调试用）
+
 ---
 
 ## 七、环境变量配置
@@ -492,6 +523,8 @@ MONITOR_INTERVAL=60
 SUMMARY_MAX_LENGTH=500
 COMMENT_SEND_INTERVAL=30
 SUBTITLE_MAX_LENGTH=15000
+FOLLOWER_CHECK_ENABLED=true
+NOT_FOLLOWER_REPLY=喂喂！连个关注都不点就想使唤我？[生气] 抓到一只企图白嫖野生总结的B友！快乖乖点上关注，不然本课代表要罢工啦！(〃＞目＜)
 
 # ===== Database =====
 DATABASE_URL=sqlite+aiosqlite:///./biliagent.db
@@ -537,3 +570,4 @@ DATABASE_URL=sqlite+aiosqlite:///./biliagent.db
 | LLM API调用失败 | 无法生成摘要 | 重试机制（最多3次） + 错误日志 |
 | 字幕过长超出LLM上下文 | 截断导致摘要不完整 | 智能截断 + 在摘要中注明 |
 | B站API变更 | 接口不可用 | bilibili-api-python社区维护，关注更新 |
+| 关注关系API限流 | 频繁查询被限制 | 可考虑短期缓存关注状态（如缓存5分钟） |

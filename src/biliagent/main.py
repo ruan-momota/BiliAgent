@@ -5,12 +5,16 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.exc import IntegrityError
 
 from biliagent.api.routes import router
+from biliagent.config import settings
 from biliagent.graph.workflow import build_workflow
 from biliagent.models.schemas import MentionInfo
 from biliagent.platforms.bilibili.client import BilibiliPlatform
 from biliagent.platforms.bilibili.monitor import MentionMonitor
+from sqlalchemy import select
+
 from biliagent.storage.database import (
     AgentTrace,
     Comment,
@@ -40,22 +44,52 @@ async def handle_mention(mention: MentionInfo) -> None:
         mention.mention_id, mention.video_id, mention.user_name,
     )
 
-    # 1. 创建任务记录
-    async with async_session() as session:
-        task = Task(
-            platform=mention.platform,
-            mention_id=mention.mention_id,
-            video_id=mention.video_id,
-            user_id=mention.user_id,
-            user_name=mention.user_name,
-            status="processing",
-        )
-        session.add(task)
-        await session.commit()
-        await session.refresh(task)
-        task_id = task.id
+    # 1. 创建任务记录（重复 mention_id 直接跳过）
+    try:
+        async with async_session() as session:
+            task = Task(
+                platform=mention.platform,
+                mention_id=mention.mention_id,
+                video_id=mention.video_id,
+                user_id=mention.user_id,
+                user_name=mention.user_name,
+                status="processing",
+            )
+            session.add(task)
+            await session.commit()
+            await session.refresh(task)
+            task_id = task.id
+    except IntegrityError:
+        logger.info("Mention %s already processed, skipping", mention.mention_id)
+        return
 
-    # 2. 执行 LangGraph 工作流
+    # 2. 关注检查：未关注用户直接回复提示，不进入工作流
+    if settings.app.follower_check_enabled:
+        is_follower = await platform.check_is_follower(mention.user_id)
+        if not is_follower:
+            logger.info(
+                "User %s (%s) is not a follower, skipping workflow",
+                mention.user_id, mention.user_name,
+            )
+            at_prefix = f"@{mention.user_name} " if mention.user_name else ""
+            reply_text = f"{at_prefix}{settings.app.not_follower_reply}"
+            comment_id = await platform.post_comment(mention.video_id, reply_text)
+            async with async_session() as session:
+                task = await session.get(Task, task_id)
+                if task:
+                    task.status = "not_follower"
+                    if comment_id:
+                        session.add(Comment(
+                            task_id=task_id,
+                            platform=mention.platform,
+                            comment_id=comment_id,
+                            content=reply_text,
+                            floor_number=1,
+                        ))
+                    await session.commit()
+            return
+
+    # 3. 执行 LangGraph 工作流
     try:
         initial_state = {"mention": mention, "traces": []}
         result = await workflow.ainvoke(initial_state)
@@ -77,7 +111,7 @@ async def handle_mention(mention: MentionInfo) -> None:
         error = str(e)
         logger.exception("Workflow failed for task %d", task_id)
 
-    # 3. 更新任务状态 + 保存 traces
+    # 4. 更新任务状态 + 保存 traces
     async with async_session() as session:
         task = await session.get(Task, task_id)
         if task:
@@ -126,6 +160,14 @@ async def lifespan(app: FastAPI):
         logger.info("Bilibili credential check passed.")
     else:
         logger.warning("Bilibili credential may be invalid! Check your Cookie.")
+
+    # 从数据库加载已处理的 mention_id，防止重启后重复处理
+    async with async_session() as session:
+        result = await session.execute(select(Task.mention_id))
+        existing_ids = {row[0] for row in result.all()}
+    if existing_ids:
+        monitor.mark_processed(existing_ids)
+        logger.info("Loaded %d processed mention IDs from database.", len(existing_ids))
 
     # 启动 Monitor 轮询
     monitor.set_callback(handle_mention)

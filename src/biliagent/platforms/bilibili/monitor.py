@@ -51,6 +51,10 @@ class MentionMonitor:
         """设置新消息回调"""
         self._on_mention = callback
 
+    def mark_processed(self, mention_ids: set[str]) -> None:
+        """批量标记已处理的 mention_id（用于启动时从数据库恢复）"""
+        self._processed_ids.update(mention_ids)
+
     async def _poll_loop(self) -> None:
         """轮询主循环"""
         while self._running:
@@ -70,13 +74,17 @@ class MentionMonitor:
             logger.debug("No new mentions found")
             return
 
-        logger.info("Found %d new mention(s)", len(mentions))
+        # 更新 last_id 为最新的一条
+        self._last_id = mentions[0].mention_id
 
-        for mention in mentions:
-            # 跳过已处理的
-            if mention.mention_id in self._processed_ids:
-                continue
+        # 过滤已处理的 mention
+        new_mentions = [m for m in mentions if m.mention_id not in self._processed_ids]
+        if not new_mentions:
+            return
 
+        logger.info("Found %d new mention(s)", len(new_mentions))
+
+        for mention in new_mentions:
             self._processed_ids.add(mention.mention_id)
             logger.info(
                 "New mention: id=%s, video=%s, user=%s",
@@ -93,6 +101,3 @@ class MentionMonitor:
                     logger.exception(
                         "Error processing mention %s", mention.mention_id
                     )
-
-        # 更新 last_id 为最新的一条
-        self._last_id = mentions[0].mention_id

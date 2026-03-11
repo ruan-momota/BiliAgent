@@ -71,3 +71,14 @@ class PlatformBase(ABC):
             回复评论ID，失败返回 None
         """
         ...
+
+    @abstractmethod
+    async def check_is_follower(self, user_id: str) -> bool:
+        """检查指定用户是否关注了本账号
+
+        Args:
+            user_id: 待检查的用户ID
+        Returns:
+            True 表示该用户已关注本账号
+        """
+        ...
