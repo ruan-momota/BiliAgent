@@ -51,7 +51,7 @@ class TestFollowerCheckInHandleMention:
         mock_session_factory.return_value = mock_session
 
         mention = _make_mention()
-        await handle_mention(mention)
+        should_retry = await handle_mention(mention)
 
         # 验证：调用了关注检查
         mock_platform.check_is_follower.assert_called_once_with("uid_001")
@@ -61,6 +61,8 @@ class TestFollowerCheckInHandleMention:
         mock_workflow.ainvoke.assert_not_called()
         # 验证：任务状态设为 not_follower
         assert mock_task.status == "not_follower"
+        # 验证：返回 True 表示需要重试
+        assert should_retry is True
 
     @pytest.mark.asyncio
     @patch("biliagent.main.workflow")
@@ -94,10 +96,12 @@ class TestFollowerCheckInHandleMention:
         })
 
         mention = _make_mention()
-        await handle_mention(mention)
+        should_retry = await handle_mention(mention)
 
         # 验证：工作流被调用
         mock_workflow.ainvoke.assert_called_once()
+        # 验证：返回 False 表示已处理完毕
+        assert should_retry is False
 
     @pytest.mark.asyncio
     @patch("biliagent.main.workflow")
@@ -129,9 +133,11 @@ class TestFollowerCheckInHandleMention:
         })
 
         mention = _make_mention()
-        await handle_mention(mention)
+        should_retry = await handle_mention(mention)
 
         # 验证：未调用关注检查
         mock_platform.check_is_follower.assert_not_called()
         # 验证：工作流被调用
         mock_workflow.ainvoke.assert_called_once()
+        # 验证：返回 False 表示已处理完毕
+        assert should_retry is False

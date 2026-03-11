@@ -93,10 +93,15 @@ class MentionMonitor:
                 mention.user_name,
             )
 
-            # 触发回调
+            # 触发回调（返回 True 表示需要稍后重试，如未关注用户）
             if self._on_mention is not None:
                 try:
-                    await self._on_mention(mention)
+                    should_retry = await self._on_mention(mention)
+                    if should_retry:
+                        self._processed_ids.discard(mention.mention_id)
+                        logger.debug(
+                            "Mention %s marked for retry", mention.mention_id
+                        )
                 except Exception:
                     logger.exception(
                         "Error processing mention %s", mention.mention_id

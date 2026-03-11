@@ -37,14 +37,19 @@ monitor = MentionMonitor(platform)
 workflow = build_workflow(platform)
 
 
-async def handle_mention(mention: MentionInfo) -> None:
-    """Monitor 检测到新@消息时的回调：创建任务记录 → 执行工作流 → 保存结果"""
+async def handle_mention(mention: MentionInfo) -> bool:
+    """Monitor 检测到新@消息时的回调：创建任务记录 → 执行工作流 → 保存结果
+
+    Returns:
+        True 表示需要稍后重试（如用户未关注），False 表示已处理完毕。
+    """
     logger.info(
         "Processing mention: id=%s, video=%s, user=%s",
         mention.mention_id, mention.video_id, mention.user_name,
     )
 
-    # 1. 创建任务记录（重复 mention_id 直接跳过）
+    # 1. 创建任务记录（重复 mention_id → 检查是否为 not_follower 可重试）
+    is_retry = False
     try:
         async with async_session() as session:
             task = Task(
@@ -60,34 +65,68 @@ async def handle_mention(mention: MentionInfo) -> None:
             await session.refresh(task)
             task_id = task.id
     except IntegrityError:
-        logger.info("Mention %s already processed, skipping", mention.mention_id)
-        return
+        # 如果之前因未关注被拒绝，允许重新检查
+        async with async_session() as session:
+            result = await session.execute(
+                select(Task).where(Task.mention_id == mention.mention_id)
+            )
+            existing_task = result.scalar_one_or_none()
+            if existing_task and existing_task.status == "not_follower":
+                logger.info(
+                    "Re-evaluating mention %s (previously not_follower)",
+                    mention.mention_id,
+                )
+                task_id = existing_task.id
+                is_retry = True
+            else:
+                logger.info("Mention %s already processed, skipping", mention.mention_id)
+                return False
 
     # 2. 关注检查：未关注用户直接回复提示，不进入工作流
     if settings.app.follower_check_enabled:
         is_follower = await platform.check_is_follower(mention.user_id)
         if not is_follower:
+            if not is_retry:
+                # 首次：发送求关注提示
+                logger.info(
+                    "User %s (%s) is not a follower, skipping workflow",
+                    mention.user_id, mention.user_name,
+                )
+                at_prefix = f"@{mention.user_name} " if mention.user_name else ""
+                reply_text = f"{at_prefix}{settings.app.not_follower_reply}"
+                comment_id = await platform.post_comment(mention.video_id, reply_text)
+                async with async_session() as session:
+                    task = await session.get(Task, task_id)
+                    if task:
+                        task.status = "not_follower"
+                        if comment_id:
+                            session.add(Comment(
+                                task_id=task_id,
+                                platform=mention.platform,
+                                comment_id=comment_id,
+                                content=reply_text,
+                                floor_number=1,
+                            ))
+                        await session.commit()
+            else:
+                # 重试但仍未关注，静默等待下次轮询
+                logger.debug(
+                    "User %s still not a follower, will retry later",
+                    mention.user_id,
+                )
+            return True  # 告知 Monitor 需要重试
+
+        # 如果是重试且用户已关注，更新任务状态为 processing
+        if is_retry:
             logger.info(
-                "User %s (%s) is not a follower, skipping workflow",
-                mention.user_id, mention.user_name,
+                "User %s has followed! Re-processing mention %s",
+                mention.user_id, mention.mention_id,
             )
-            at_prefix = f"@{mention.user_name} " if mention.user_name else ""
-            reply_text = f"{at_prefix}{settings.app.not_follower_reply}"
-            comment_id = await platform.post_comment(mention.video_id, reply_text)
             async with async_session() as session:
                 task = await session.get(Task, task_id)
                 if task:
-                    task.status = "not_follower"
-                    if comment_id:
-                        session.add(Comment(
-                            task_id=task_id,
-                            platform=mention.platform,
-                            comment_id=comment_id,
-                            content=reply_text,
-                            floor_number=1,
-                        ))
+                    task.status = "processing"
                     await session.commit()
-            return
 
     # 3. 执行 LangGraph 工作流
     try:
@@ -146,6 +185,8 @@ async def handle_mention(mention: MentionInfo) -> None:
 
             await session.commit()
 
+    return False
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -162,8 +203,11 @@ async def lifespan(app: FastAPI):
         logger.warning("Bilibili credential may be invalid! Check your Cookie.")
 
     # 从数据库加载已处理的 mention_id，防止重启后重复处理
+    # 排除 not_follower 状态的任务，使其可被重新检查
     async with async_session() as session:
-        result = await session.execute(select(Task.mention_id))
+        result = await session.execute(
+            select(Task.mention_id).where(Task.status != "not_follower")
+        )
         existing_ids = {row[0] for row in result.all()}
     if existing_ids:
         monitor.mark_processed(existing_ids)
