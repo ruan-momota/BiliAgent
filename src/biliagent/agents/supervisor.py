@@ -29,22 +29,13 @@ class SupervisorAgent:
 
         Returns:
             {
-                "route": "use_cache" | "analyze" | "ignore",
+                "route": "use_cache" | "analyze" | "verify" | "ignore",
                 "cached_summary": str | None,  # use_cache 时有值
+                "question": str | None,         # verify 时有值
                 "reason": str | None,           # ignore 时有值
             }
         """
-        # 1. 先查缓存
-        cached = await get_cached_summary(platform, video_id)
-        if cached is not None:
-            logger.info("Cache hit for %s:%s", platform, video_id)
-            return {
-                "route": "use_cache",
-                "cached_summary": cached.summary_text,
-                "reason": None,
-            }
-
-        # 2. 用 LLM 判断意图
+        # 1. 用 LLM 判断意图
         prompt = self._prompt_template.format(
             content=content,
             user_name=user_name,
@@ -63,7 +54,29 @@ class SupervisorAgent:
             return {
                 "route": "ignore",
                 "cached_summary": None,
-                "reason": result.get("reason", "Not a summary request"),
+                "question": None,
+                "reason": result.get("reason", "Not a valid request"),
+            }
+
+        if result.get("action") == "verify":
+            question = result.get("question", content)
+            logger.info("Routing to verify for %s:%s", platform, video_id)
+            return {
+                "route": "verify",
+                "cached_summary": None,
+                "question": question,
+                "reason": None,
+            }
+
+        # 2. summarize 意图：先查摘要缓存
+        cached = await get_cached_summary(platform, video_id)
+        if cached is not None:
+            logger.info("Cache hit for %s:%s", platform, video_id)
+            return {
+                "route": "use_cache",
+                "cached_summary": cached.summary_text,
+                "question": None,
+                "reason": None,
             }
 
         # 默认走 analyze
@@ -71,6 +84,7 @@ class SupervisorAgent:
         return {
             "route": "analyze",
             "cached_summary": None,
+            "question": None,
             "reason": None,
         }
 

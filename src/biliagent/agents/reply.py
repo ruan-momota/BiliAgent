@@ -22,10 +22,24 @@ class ReplyAgent:
         self._max_length = settings.app.summary_max_length
         self._send_interval = settings.app.comment_send_interval
 
-    # 傲娇话术模板
+    # 傲娇话术模板 — 总结
     _SUMMARY_HEADER = "哼，既然你都诚心诚意地召唤我了，那我就大发慈悲地给你总结一下吧！"
     _SUMMARY_FOOTER = "（拿走不谢！下次还要找我哦~ [傲娇]）"
     _ERROR_HEADER = "呜…这个视频我也没办法总结啦，不是我不想帮你！"
+
+    # 傲娇话术模板 — 鉴别
+    _VERIFY_HEADERS = {
+        "agree": "难得看到一个靠谱的视频！本课代表勉为其难地认可一下 [傲娇]",
+        "disagree": "哼，让本课代表来鉴别一下！这个视频嘛...说实话有点问题 [思考]",
+        "doubt": "哼，让本课代表来鉴别一下！这个视频嘛...得打个问号 [思考]",
+        "neutral": "让本课代表来鉴别一下这个视频吧 [思考]",
+    }
+    _VERIFY_FOOTERS = {
+        "agree": "（不是我夸它哦，是事实就是这样！[嫌弃]）",
+        "disagree": "（本课代表可是查了资料才说的，不服来辩！[得意]）",
+        "doubt": "（本课代表可是查了资料才说的，不服来辩！[得意]）",
+        "neutral": "（以上仅代表本课代表个人观点哦~ [傲娇]）",
+    }
 
     async def run(
         self,
@@ -35,6 +49,9 @@ class ReplyAgent:
         summary: str | None = None,
         is_error: bool = False,
         error_reason: str | None = None,
+        is_verify: bool = False,
+        verification: str | None = None,
+        opinion: str | None = None,
     ) -> dict:
         """格式化并发布评论
 
@@ -45,32 +62,44 @@ class ReplyAgent:
                 "success": bool,
             }
         """
-        # 1. 用 LLM 格式化回复内容
-        prompt = self._prompt_template.format(
-            title=title,
-            summary=summary or "",
-            is_error=is_error,
-            error_reason=error_reason or "",
-            max_length=self._max_length,
-        )
-
-        messages = [
-            SystemMessage(content=prompt),
-            HumanMessage(content="请生成最终评论文本。"),
-        ]
-
-        formatted_text = await invoke_llm_with_retry(self._llm, messages, "reply")
-
-        # 2. 包裹 @用户名 + 傲娇话术
         at_prefix = f"@{user_name} " if user_name else ""
-        if is_error:
-            formatted_text = f"{at_prefix}{self._ERROR_HEADER}"
-        else:
+
+        if is_verify and verification:
+            # 鉴别回复：直接使用 Verifier 已生成的内容，包裹傲娇话术
+            opinion_key = opinion if opinion in self._VERIFY_HEADERS else "neutral"
+            header = self._VERIFY_HEADERS[opinion_key]
+            footer = self._VERIFY_FOOTERS[opinion_key]
             formatted_text = (
-                f"{at_prefix}{self._SUMMARY_HEADER}\n\n"
-                f"{formatted_text}\n\n"
-                f"{self._SUMMARY_FOOTER}"
+                f"{at_prefix}{header}\n\n"
+                f"{verification}\n\n"
+                f"{footer}"
             )
+        else:
+            # 总结回复：用 LLM 格式化
+            prompt = self._prompt_template.format(
+                title=title,
+                summary=summary or "",
+                is_error=is_error,
+                error_reason=error_reason or "",
+                max_length=self._max_length,
+            )
+
+            messages = [
+                SystemMessage(content=prompt),
+                HumanMessage(content="请生成最终评论文本。"),
+            ]
+
+            formatted_text = await invoke_llm_with_retry(self._llm, messages, "reply")
+
+            # 包裹 @用户名 + 傲娇话术
+            if is_error:
+                formatted_text = f"{at_prefix}{self._ERROR_HEADER}"
+            else:
+                formatted_text = (
+                    f"{at_prefix}{self._SUMMARY_HEADER}\n\n"
+                    f"{formatted_text}\n\n"
+                    f"{self._SUMMARY_FOOTER}"
+                )
 
         # 3. 拆分（盖楼兜底）
         parts = self._split_comment(formatted_text)

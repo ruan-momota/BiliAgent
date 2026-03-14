@@ -73,6 +73,23 @@ class Comment(Base):
     task: Mapped["Task"] = relationship(back_populates="comments")
 
 
+# ---- 鉴别缓存表 ----
+class Verification(Base):
+    __tablename__ = "verifications"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    platform: Mapped[str] = mapped_column(String, default="bilibili")
+    video_id: Mapped[str] = mapped_column(String)
+    video_title: Mapped[str | None] = mapped_column(String, nullable=True)
+    question: Mapped[str] = mapped_column(Text)  # 用户提问内容
+    verification: Mapped[str] = mapped_column(Text)  # 鉴别评论内容
+    opinion: Mapped[str | None] = mapped_column(String, nullable=True)  # agree/disagree/doubt/neutral
+    sources: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON 数组
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime, server_default=func.now()
+    )
+
+
 # ---- Agent 执行追溯表 ----
 class AgentTrace(Base):
     __tablename__ = "agent_traces"

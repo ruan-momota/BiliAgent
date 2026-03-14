@@ -1,4 +1,13 @@
-"""LangGraph 工作流编排 — 把 4 个 Agent 串成完整的处理链"""
+"""LangGraph 工作流编排 — 把 Agent 串成完整的处理链
+
+工作流结构：
+    START → supervisor → [use_cache]     → reply → END
+                       → [analyze]       → analyzer → [can] → summarizer → reply → END
+                                                    → [no]  → reply → END
+                       → [verify]        → verify_cache_judge → [hit]  → reply → END
+                                                               → [miss] → verifier → reply → END
+                       → [ignore]        → END
+"""
 
 import json
 import logging
@@ -10,10 +19,13 @@ from biliagent.agents.analyzer import AnalyzerAgent
 from biliagent.agents.reply import ReplyAgent
 from biliagent.agents.summarizer import SummarizerAgent
 from biliagent.agents.supervisor import SupervisorAgent
+from biliagent.agents.verify_cache_judge import VerifyCacheJudgeAgent
+from biliagent.agents.verifier import VerifierAgent
 from biliagent.graph.state import AgentState
 from biliagent.models.schemas import AgentTraceInfo
 from biliagent.platforms.base import PlatformBase
 from biliagent.storage.cache import save_summary
+from biliagent.storage.verify_cache import save_verification
 
 logger = logging.getLogger("biliagent.graph")
 
@@ -59,6 +71,7 @@ async def supervisor_node(state: AgentState) -> AgentState:
         state["video_id"] = mention.video_id
         state["route"] = result["route"]
         state["cached_summary"] = result.get("cached_summary")
+        state["question"] = result.get("question")
         if result.get("reason"):
             state["error"] = result["reason"]
 
@@ -66,7 +79,7 @@ async def supervisor_node(state: AgentState) -> AgentState:
         _add_trace(
             state, "supervisor",
             {"content": mention.content, "video_id": mention.video_id},
-            {"route": result["route"]},
+            {"route": result["route"], "question": result.get("question")},
             duration,
         )
     except Exception as e:
@@ -159,32 +172,137 @@ async def summarizer_node(state: AgentState) -> AgentState:
     return state
 
 
+async def verify_cache_judge_node(state: AgentState) -> AgentState:
+    """VerifyCacheJudge 节点：查询鉴别缓存，LLM 判断相似度"""
+    mention = state["mention"]
+    video_id = state["video_id"]
+    question = state.get("question", mention.content)
+    t0 = time.perf_counter()
+
+    try:
+        agent = VerifyCacheJudgeAgent()
+        result = await agent.run(
+            video_id=video_id,
+            question=question,
+            platform=mention.platform,
+        )
+
+        state["verify_route"] = result["route"]
+        state["cached_verification"] = result.get("cached_verification")
+        state["cached_opinion"] = result.get("cached_opinion")
+        state["cached_sources"] = result.get("cached_sources")
+
+        duration = int((time.perf_counter() - t0) * 1000)
+        _add_trace(
+            state, "verify_cache_judge",
+            {"video_id": video_id, "question": question},
+            {"verify_route": result["route"]},
+            duration,
+        )
+    except Exception as e:
+        duration = int((time.perf_counter() - t0) * 1000)
+        state["verify_route"] = "verify"  # 出错时默认重新生成
+        state["error"] = str(e)
+        _add_trace(state, "verify_cache_judge", None, None, duration, "failed", str(e))
+        logger.exception("VerifyCacheJudge node failed")
+
+    return state
+
+
+async def verifier_node(state: AgentState, platform: PlatformBase) -> AgentState:
+    """Verifier 节点：联网搜索 + 鉴别 + 观点生成"""
+    mention = state["mention"]
+    video_id = state["video_id"]
+    question = state.get("question", mention.content)
+    t0 = time.perf_counter()
+
+    try:
+        agent = VerifierAgent(platform)
+        result = await agent.run(video_id=video_id, question=question)
+
+        verification = result["verification"]
+        opinion = result["opinion"]
+        sources = result.get("sources", [])
+
+        state["verification"] = verification
+        state["opinion"] = opinion
+        state["sources"] = sources
+        state["video_info"] = result.get("video_info")
+
+        # 保存到鉴别缓存
+        video_info = result.get("video_info")
+        await save_verification(
+            platform=mention.platform,
+            video_id=video_id,
+            video_title=video_info.title if video_info else None,
+            question=question,
+            verification=verification,
+            opinion=opinion,
+            sources=json.dumps(sources, ensure_ascii=False) if sources else None,
+        )
+
+        duration = int((time.perf_counter() - t0) * 1000)
+        _add_trace(
+            state, "verifier",
+            {"video_id": video_id, "question": question},
+            {"opinion": opinion, "verification_length": len(verification)},
+            duration,
+        )
+    except Exception as e:
+        duration = int((time.perf_counter() - t0) * 1000)
+        state["verification"] = None
+        state["error"] = str(e)
+        _add_trace(state, "verifier", None, None, duration, "failed", str(e))
+        logger.exception("Verifier node failed")
+
+    return state
+
+
 async def reply_node(state: AgentState, platform: PlatformBase) -> AgentState:
-    """Reply 节点：格式化并发布评论"""
+    """Reply 节点：格式化并发布评论（支持总结和鉴别两种模式）"""
     t0 = time.perf_counter()
 
     try:
         video_id = state["video_id"]
         video_info = state.get("video_info")
         title = video_info.title if video_info else ""
-
-        # 确定回复内容：缓存摘要 / 新摘要 / 错误信息
-        summary = state.get("cached_summary") or state.get("summary")
-        is_error = summary is None
-        error_reason = state.get("error") if is_error else None
-
         mention = state["mention"]
         user_name = mention.user_name or ""
 
-        agent = ReplyAgent(platform)
-        result = await agent.run(
-            video_id=video_id,
-            title=title,
-            user_name=user_name,
-            summary=summary,
-            is_error=is_error,
-            error_reason=error_reason,
-        )
+        # 判断是鉴别回复还是总结回复
+        is_verify = state.get("route") == "verify"
+
+        if is_verify:
+            # 鉴别回复
+            verification = (
+                state.get("cached_verification") or state.get("verification")
+            )
+            opinion = state.get("cached_opinion") or state.get("opinion")
+
+            agent = ReplyAgent(platform)
+            result = await agent.run(
+                video_id=video_id,
+                title=title,
+                user_name=user_name,
+                is_verify=True,
+                verification=verification,
+                opinion=opinion,
+            )
+        else:
+            # 总结回复
+            summary = state.get("cached_summary") or state.get("summary")
+            is_error = summary is None
+            error_reason = state.get("error") if is_error else None
+
+            agent = ReplyAgent(platform)
+            result = await agent.run(
+                video_id=video_id,
+                title=title,
+                user_name=user_name,
+                summary=summary,
+                is_error=is_error,
+                error_reason=error_reason,
+            )
 
         state["reply_parts"] = result["reply_parts"]
         state["comment_ids"] = result["comment_ids"]
@@ -193,7 +311,7 @@ async def reply_node(state: AgentState, platform: PlatformBase) -> AgentState:
         duration = int((time.perf_counter() - t0) * 1000)
         _add_trace(
             state, "reply",
-            {"is_error": is_error, "summary_length": len(summary) if summary else 0},
+            {"is_verify": is_verify},
             {"parts_count": len(result["reply_parts"]), "success": result["success"]},
             duration,
         )
@@ -216,6 +334,8 @@ def route_after_supervisor(state: AgentState) -> str:
         return "reply"
     elif route == "analyze":
         return "analyzer"
+    elif route == "verify":
+        return "verify_cache_judge"
     else:
         return END
 
@@ -225,26 +345,30 @@ def route_after_analyzer(state: AgentState) -> str:
     if state.get("can_summarize"):
         return "summarizer"
     else:
-        # 无法总结也要回复（告知原因）
         return "reply"
+
+
+def route_after_verify_cache_judge(state: AgentState) -> str:
+    """VerifyCacheJudge 之后的条件路由"""
+    verify_route = state.get("verify_route", "verify")
+    if verify_route == "use_verify_cache":
+        return "reply"
+    else:
+        return "verifier"
 
 
 # ---- 构建图 ----
 
 def build_workflow(platform: PlatformBase) -> StateGraph:
-    """构建并编译 LangGraph 工作流
-
-    工作流结构：
-        START → supervisor → [use_cache] → reply → END
-                           → [analyze]  → analyzer → [can_summarize] → summarizer → reply → END
-                                                    → [cannot]       → reply → END
-                           → [ignore]   → END
-    """
+    """构建并编译 LangGraph 工作流"""
     graph = StateGraph(AgentState)
 
     # 注册节点（用 async 闭包注入 platform 依赖）
     async def _analyzer(state: AgentState) -> AgentState:
         return await analyzer_node(state, platform)
+
+    async def _verifier(state: AgentState) -> AgentState:
+        return await verifier_node(state, platform)
 
     async def _reply(state: AgentState) -> AgentState:
         return await reply_node(state, platform)
@@ -252,15 +376,18 @@ def build_workflow(platform: PlatformBase) -> StateGraph:
     graph.add_node("supervisor", supervisor_node)
     graph.add_node("analyzer", _analyzer)
     graph.add_node("summarizer", summarizer_node)
+    graph.add_node("verify_cache_judge", verify_cache_judge_node)
+    graph.add_node("verifier", _verifier)
     graph.add_node("reply", _reply)
 
     # 边：START → supervisor
     graph.add_edge(START, "supervisor")
 
-    # 条件边：supervisor → reply / analyzer / END
+    # 条件边：supervisor → reply / analyzer / verify_cache_judge / END
     graph.add_conditional_edges("supervisor", route_after_supervisor, {
         "reply": "reply",
         "analyzer": "analyzer",
+        "verify_cache_judge": "verify_cache_judge",
         END: END,
     })
 
@@ -272,6 +399,15 @@ def build_workflow(platform: PlatformBase) -> StateGraph:
 
     # 边：summarizer → reply
     graph.add_edge("summarizer", "reply")
+
+    # 条件边：verify_cache_judge → reply / verifier
+    graph.add_conditional_edges("verify_cache_judge", route_after_verify_cache_judge, {
+        "reply": "reply",
+        "verifier": "verifier",
+    })
+
+    # 边：verifier → reply
+    graph.add_edge("verifier", "reply")
 
     # 边：reply → END
     graph.add_edge("reply", END)

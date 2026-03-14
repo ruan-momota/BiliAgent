@@ -16,6 +16,7 @@ from biliagent.models.schemas import (
     SummaryResponse,
     TaskDetailResponse,
     TaskResponse,
+    VerificationResponse,
 )
 from biliagent.storage.cache import delete_summary, list_summaries
 from biliagent.storage.database import (
@@ -23,8 +24,10 @@ from biliagent.storage.database import (
     Comment,
     Summary,
     Task,
+    Verification,
     async_session,
 )
+from biliagent.storage.verify_cache import delete_verification, list_verifications
 
 logger = logging.getLogger("biliagent.api")
 router = APIRouter()
@@ -130,6 +133,9 @@ async def get_stats():
         summaries = (
             await session.execute(select(func.count(Summary.id)))
         ).scalar() or 0
+        verifications = (
+            await session.execute(select(func.count(Verification.id)))
+        ).scalar() or 0
 
         not_follower = (
             await session.execute(
@@ -157,6 +163,7 @@ async def get_stats():
             not_follower_tasks=not_follower,
             success_rate=round(completed / total, 4) if total > 0 else 0.0,
             total_summaries=summaries,
+            total_verifications=verifications,
             today_tasks=today,
             credential_valid=credential_valid,
         )
@@ -207,3 +214,23 @@ async def test_trigger(req: TestTriggerRequest):
     logger.info("Manual trigger: video=%s", req.video_id)
     await handle_mention(mention)
     return {"triggered": True, "mention_id": mention.mention_id}
+
+
+# ---- 鉴别缓存管理 ----
+@router.get("/verifications", response_model=list[VerificationResponse])
+async def get_verifications(
+    limit: int = Query(default=50, le=200),
+    offset: int = Query(default=0, ge=0),
+):
+    """列出鉴别缓存"""
+    rows = await list_verifications(limit=limit, offset=offset)
+    return [VerificationResponse.model_validate(r) for r in rows]
+
+
+@router.delete("/verifications/{verification_id}")
+async def remove_verification(verification_id: int):
+    """删除指定鉴别缓存"""
+    ok = await delete_verification(verification_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Verification not found")
+    return {"deleted": True}

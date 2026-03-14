@@ -36,6 +36,14 @@ class AgentTraceInfo(BaseModel):
     error_message: str | None = None
 
 
+# ---- 鉴别相关 ----
+class VerificationInfo(BaseModel):
+    """鉴别结果数据"""
+    verification: str       # 鉴别评论内容
+    opinion: str = "neutral"  # agree/disagree/doubt/neutral
+    sources: list[str] = []   # 联网搜索引用来源
+
+
 # ---- API 响应模型 ----
 class TaskResponse(BaseModel):
     """任务列表 API 响应"""
@@ -80,6 +88,20 @@ class SummaryResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class VerificationResponse(BaseModel):
+    """鉴别缓存 API 响应"""
+    id: int
+    video_id: str
+    video_title: str | None
+    question: str
+    verification: str
+    opinion: str | None
+    sources: str | None  # JSON string
+    created_at: datetime.datetime
+
+    model_config = {"from_attributes": True}
+
+
 class StatsResponse(BaseModel):
     """统计概览 API 响应"""
     total_tasks: int
@@ -88,5 +110,6 @@ class StatsResponse(BaseModel):
     not_follower_tasks: int = 0
     success_rate: float
     total_summaries: int
+    total_verifications: int = 0
     today_tasks: int
     credential_valid: bool | None = None  # B站 Cookie 状态：True/False/None(未检测)

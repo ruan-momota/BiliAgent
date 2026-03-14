@@ -39,16 +39,18 @@ class TestSupervisorRun:
     """测试 Supervisor 运行逻辑"""
 
     @pytest.mark.asyncio
+    @patch("biliagent.agents.supervisor.invoke_llm_with_retry")
     @patch("biliagent.agents.supervisor.get_cached_summary")
-    async def test_cache_hit_returns_use_cache(self, mock_cache):
-        """缓存命中时应返回 use_cache 路由"""
+    async def test_cache_hit_returns_use_cache(self, mock_cache, mock_llm):
+        """LLM 判断 summarize + 缓存命中 → use_cache 路由"""
+        mock_llm.return_value = '{"action": "summarize"}'
         mock_summary = MagicMock()
         mock_summary.summary_text = "Cached summary content"
         mock_cache.return_value = mock_summary
 
         agent = SupervisorAgent.__new__(SupervisorAgent)
-        agent._llm = None
-        agent._prompt_template = ""
+        agent._llm = MagicMock()
+        agent._prompt_template = "test prompt {content} {user_name}"
 
         result = await agent.run(
             content="帮我总结这个视频",

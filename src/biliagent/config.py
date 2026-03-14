@@ -21,8 +21,8 @@ class BiliSettings(BaseSettings):
 class LLMSettings(BaseSettings):
     """LLM 相关配置"""
     api_key: str = Field(alias="LLM_API_KEY")
-    base_url: str = Field(default="https://api.moonshot.cn/v1", alias="LLM_BASE_URL")
-    model: str = Field(default="moonshot-v1-32k", alias="LLM_MODEL")
+    base_url: str = Field(default="https://api.moonshot.ai/v1", alias="LLM_BASE_URL")
+    model: str = Field(default="kimi-k2.5", alias="LLM_MODEL")
 
 
 class AppSettings(BaseSettings):
@@ -36,6 +36,7 @@ class AppSettings(BaseSettings):
         default="喂喂！连个关注都不点就想使唤我？[生气] 抓到一只企图白嫖野生总结的B友！快乖乖点上关注，不然本课代表要罢工啦！(〃＞目＜)",
         alias="NOT_FOLLOWER_REPLY",
     )
+    verify_max_length: int = Field(default=500, alias="VERIFY_MAX_LENGTH")
     database_url: str = Field(
         default="sqlite+aiosqlite:///./biliagent.db",
         alias="DATABASE_URL",
