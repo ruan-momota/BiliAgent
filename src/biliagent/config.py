@@ -38,7 +38,7 @@ class AppSettings(BaseSettings):
     )
     verify_max_length: int = Field(default=500, alias="VERIFY_MAX_LENGTH")
     database_url: str = Field(
-        default="sqlite+aiosqlite:///./biliagent.db",
+        default="sqlite+aiosqlite:////app/data/biliagent.db",
         alias="DATABASE_URL",
     )
 
