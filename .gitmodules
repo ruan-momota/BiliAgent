@@ -1,0 +1,3 @@
+[submodule "dashboard"]
+	path = dashboard
+	url = https://github.com/ruan-momota/BiliAgent-Dashboard.git
