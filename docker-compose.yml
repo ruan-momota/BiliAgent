@@ -16,7 +16,7 @@ services:
     build:
       context: ./dashboard
       args:
-        NEXT_PUBLIC_API_BASE: http://localhost:8000
+        NEXT_PUBLIC_API_BASE: ""
     container_name: biliagent-dashboard
     restart: unless-stopped
     ports:
