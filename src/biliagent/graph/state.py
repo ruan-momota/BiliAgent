@@ -23,6 +23,9 @@ class AgentState(TypedDict, total=False):
     has_subtitles: bool           # 是否有字幕
     can_summarize: bool           # 是否可总结
 
+    # ---- Analyzer 扩展（RAG）----
+    is_long_video: bool           # 字幕是否超过长视频阈值（触发 Map-Reduce）
+
     # ---- Summarizer 输出 ----
     summary: str | None           # 生成的摘要
 

@@ -6,8 +6,10 @@ import logging
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from biliagent.agents import create_llm, invoke_llm_with_retry, load_prompt
+from biliagent.config import settings
 from biliagent.models.schemas import VideoInfo
 from biliagent.platforms.base import PlatformBase
+from biliagent.rag.indexer import index_subtitles
 
 logger = logging.getLogger("biliagent.agent.analyzer")
 
@@ -20,7 +22,7 @@ class AnalyzerAgent:
         self._prompt_template = load_prompt("analyzer")
         self._platform = platform
 
-    async def run(self, video_id: str) -> dict:
+    async def run(self, video_id: str, platform: str = "bilibili") -> dict:
         """执行分析
 
         Returns:
@@ -28,6 +30,7 @@ class AnalyzerAgent:
                 "can_summarize": bool,
                 "video_info": VideoInfo | None,
                 "subtitles": str | None,
+                "is_long_video": bool,  # 是否超过长视频阈值
                 "reason": str | None,   # 不可总结时的原因
             }
         """
@@ -67,11 +70,27 @@ class AnalyzerAgent:
         verdict = result.get("result", "")
 
         if verdict == "can_summarize":
-            logger.info("Video %s is summarizable", video_id)
+            # 长视频检测：字幕超过阈值时索引到 ChromaDB
+            threshold = settings.rag.long_video_threshold
+            is_long = subtitles is not None and len(subtitles) > threshold
+            if is_long:
+                logger.info(
+                    "Video %s has long subtitles (%d chars > %d), indexing to ChromaDB",
+                    video_id, len(subtitles), threshold,
+                )
+                index_subtitles(
+                    platform=platform,
+                    video_id=video_id,
+                    video_title=video_info.title,
+                    subtitles=subtitles,
+                )
+
+            logger.info("Video %s is summarizable (long=%s)", video_id, is_long)
             return {
                 "can_summarize": True,
                 "video_info": video_info,
                 "subtitles": subtitles,
+                "is_long_video": is_long,
                 "reason": None,
             }
 
@@ -81,6 +100,7 @@ class AnalyzerAgent:
             "can_summarize": False,
             "video_info": video_info,
             "subtitles": None,
+            "is_long_video": False,
             "reason": reason,
         }
 

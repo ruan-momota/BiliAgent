@@ -25,6 +25,17 @@ class LLMSettings(BaseSettings):
     model: str = Field(default="kimi-k2.5", alias="LLM_MODEL")
 
 
+class RAGSettings(BaseSettings):
+    """RAG 基础设施配置"""
+    chroma_persist_dir: str = Field(default="./data/chroma", alias="CHROMA_PERSIST_DIR")
+    embedding_model: str = Field(default="BAAI/bge-base-zh-v1.5", alias="EMBEDDING_MODEL")
+    chunk_size: int = Field(default=1000, alias="CHUNK_SIZE")
+    chunk_overlap: int = Field(default=200, alias="CHUNK_OVERLAP")
+    long_video_threshold: int = Field(default=15000, alias="LONG_VIDEO_THRESHOLD")
+    qa_top_k: int = Field(default=5, alias="QA_TOP_K")
+    qa_max_length: int = Field(default=500, alias="QA_MAX_LENGTH")
+
+
 class AppSettings(BaseSettings):
     """应用运行配置"""
     monitor_interval: int = Field(default=60, alias="MONITOR_INTERVAL")
@@ -48,6 +59,7 @@ class Settings(BaseSettings):
     bili: BiliSettings = BiliSettings()  # type: ignore[call-arg]
     llm: LLMSettings = LLMSettings()  # type: ignore[call-arg]
     app: AppSettings = AppSettings()
+    rag: RAGSettings = RAGSettings()
 
     # 每个 Agent 可独立配置 LLM，默认继承全局
     agent_llm: dict[str, dict[str, str]] = Field(default_factory=dict)

@@ -95,16 +95,18 @@ async def supervisor_node(state: AgentState) -> AgentState:
 async def analyzer_node(state: AgentState, platform: PlatformBase) -> AgentState:
     """Analyzer 节点：拉取视频信息和字幕，评估可总结性"""
     video_id = state["video_id"]
+    mention = state["mention"]
     t0 = time.perf_counter()
 
     try:
         agent = AnalyzerAgent(platform)
-        result = await agent.run(video_id)
+        result = await agent.run(video_id, platform=mention.platform)
 
         state["video_info"] = result["video_info"]
         state["subtitles"] = result.get("subtitles")
         state["has_subtitles"] = result.get("subtitles") is not None
         state["can_summarize"] = result["can_summarize"]
+        state["is_long_video"] = result.get("is_long_video", False)
         if not result["can_summarize"]:
             state["error"] = result.get("reason")
 
@@ -115,6 +117,7 @@ async def analyzer_node(state: AgentState, platform: PlatformBase) -> AgentState
             {
                 "can_summarize": result["can_summarize"],
                 "has_subtitles": state["has_subtitles"],
+                "is_long_video": state.get("is_long_video", False),
                 "title": result["video_info"].title if result["video_info"] else None,
             },
             duration,
@@ -139,8 +142,17 @@ async def summarizer_node(state: AgentState) -> AgentState:
         description = video_info.description if video_info else ""
         subtitles = state.get("subtitles", "")
 
+        is_long_video = state.get("is_long_video", False)
+
         agent = SummarizerAgent()
-        result = await agent.run(title=title, description=description, subtitles=subtitles)
+        result = await agent.run(
+            title=title,
+            description=description,
+            subtitles=subtitles,
+            is_long_video=is_long_video,
+            video_id=state.get("video_id"),
+            platform=state["mention"].platform,
+        )
 
         summary = result["summary"]
         state["summary"] = summary
@@ -158,7 +170,7 @@ async def summarizer_node(state: AgentState) -> AgentState:
         duration = int((time.perf_counter() - t0) * 1000)
         _add_trace(
             state, "summarizer",
-            {"title": title, "subtitle_length": len(subtitles) if subtitles else 0},
+            {"title": title, "subtitle_length": len(subtitles) if subtitles else 0, "is_long_video": is_long_video},
             {"summary_length": len(summary)},
             duration,
         )

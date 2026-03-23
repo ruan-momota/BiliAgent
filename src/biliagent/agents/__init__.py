@@ -18,7 +18,7 @@ LLM_MAX_RETRIES = 3
 LLM_RETRY_BASE_DELAY = 2  # 秒，指数退避基数
 
 
-def create_llm(agent_name: str, temperature: float = 0.7) -> ChatOpenAI:
+def create_llm(agent_name: str, temperature: float = 1) -> ChatOpenAI:
     """为指定 Agent 创建 LLM 实例（含超时配置）"""
     cfg = settings.get_agent_llm(agent_name)
     return ChatOpenAI(
