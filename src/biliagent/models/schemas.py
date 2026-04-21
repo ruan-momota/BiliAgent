@@ -59,11 +59,20 @@ class TaskResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class QAInfoResponse(BaseModel):
+    """问答任务信息 API 响应（从 QA agent trace 提取）"""
+    question: str | None = None
+    answer: str | None = None
+    found: bool = False
+    chunks_count: int = 0
+
+
 class TaskDetailResponse(TaskResponse):
     """任务详情 API 响应（含追溯信息）"""
     traces: list[AgentTraceInfo] = []
     comments: list["CommentResponse"] = []
     summary: "SummaryResponse | None" = None
+    qa_info: "QAInfoResponse | None" = None
 
 
 class CommentResponse(BaseModel):

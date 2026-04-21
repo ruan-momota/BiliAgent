@@ -243,6 +243,33 @@ class BilibiliPlatform(PlatformBase):
             logger.exception("Failed to fetch subtitle from %s", url)
             return None
 
+    # ---- 音频 ----
+    async def get_audio_url(self, video_id: str) -> str | None:
+        """获取视频音频流 URL（DASH 格式最高码率音频）"""
+        try:
+            video = self._make_video(video_id)
+            download_info = await video.get_download_url(page_index=0)
+            dash = download_info.get("dash")
+            if not dash:
+                logger.info("No DASH info for video %s", video_id)
+                return None
+
+            audio_list = dash.get("audio") or []
+            if not audio_list:
+                logger.info("No audio streams for video %s", video_id)
+                return None
+
+            # 按码率降序，取最高码率的音频流
+            best = max(audio_list, key=lambda a: a.get("bandwidth", 0))
+            url = best.get("baseUrl") or best.get("base_url", "")
+            if url:
+                logger.info("Audio URL obtained for video %s, bandwidth=%d", video_id, best.get("bandwidth", 0))
+            return url or None
+
+        except Exception:
+            logger.exception("Failed to get audio URL for video %s", video_id)
+            return None
+
     # ---- 评论 ----
     async def post_comment(self, video_id: str, text: str) -> str | None:
         """发布一级评论"""

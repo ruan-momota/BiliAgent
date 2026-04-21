@@ -23,8 +23,9 @@ class AgentState(TypedDict, total=False):
     has_subtitles: bool           # 是否有字幕
     can_summarize: bool           # 是否可总结
 
-    # ---- Analyzer 扩展（RAG）----
+    # ---- Analyzer 扩展（RAG + 转录）----
     is_long_video: bool           # 字幕是否超过长视频阈值（触发 Map-Reduce）
+    text_source: str | None       # 文本来源: "subtitle" / "transcription" / None
 
     # ---- Summarizer 输出 ----
     summary: str | None           # 生成的摘要
@@ -39,6 +40,11 @@ class AgentState(TypedDict, total=False):
     verification: str | None      # 生成的鉴别评论
     opinion: str | None           # 观点标签: agree/disagree/doubt/neutral
     sources: list[str]            # 引用来源
+
+    # ---- QA 输出 ----
+    qa_answer: str | None         # 问答生成的回答正文
+    qa_found: bool                # 是否从视频内容中找到答案
+    qa_chunks: list[str]          # RAG 检索到的相关片段
 
     # ---- Reply 输出 ----
     reply_parts: list[str]        # 评论内容（可能多条/盖楼）

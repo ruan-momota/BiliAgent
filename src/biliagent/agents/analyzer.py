@@ -1,4 +1,4 @@
-"""Analyzer Agent — 获取视频信息、提取字幕、评估可总结性"""
+"""Analyzer Agent — 获取视频信息、提取字幕（无字幕则降级转录音频）、评估可总结性"""
 
 import json
 import logging
@@ -10,6 +10,7 @@ from biliagent.config import settings
 from biliagent.models.schemas import VideoInfo
 from biliagent.platforms.base import PlatformBase
 from biliagent.rag.indexer import index_subtitles
+from biliagent.services.transcriber import download_audio, transcribe
 
 logger = logging.getLogger("biliagent.agent.analyzer")
 
@@ -30,8 +31,9 @@ class AnalyzerAgent:
                 "can_summarize": bool,
                 "video_info": VideoInfo | None,
                 "subtitles": str | None,
-                "is_long_video": bool,  # 是否超过长视频阈值
-                "reason": str | None,   # 不可总结时的原因
+                "is_long_video": bool,       # 是否超过长视频阈值
+                "text_source": str | None,   # "subtitle" / "transcription"
+                "reason": str | None,        # 不可总结时的原因
             }
         """
         # 1. 获取视频信息
@@ -43,20 +45,31 @@ class AnalyzerAgent:
                 "can_summarize": False,
                 "video_info": None,
                 "subtitles": None,
+                "text_source": None,
                 "reason": "Unable to retrieve video information.",
             }
 
         # 2. 获取字幕
         subtitles = await self._platform.get_subtitles(video_id)
         has_subtitles = subtitles is not None and len(subtitles.strip()) > 0
+        text_source = "subtitle" if has_subtitles else None
 
-        # 3. 用 LLM 评估
+        # 3. 无字幕降级：尝试语音转文字
+        if not has_subtitles:
+            subtitles = await self._try_transcribe(video_id)
+            if subtitles:
+                has_subtitles = True
+                text_source = "transcription"
+                logger.info("Video %s: transcription succeeded, %d chars", video_id, len(subtitles))
+
+        # 4. 用 LLM 评估
         subtitle_preview = subtitles[:200] if subtitles else ""
         prompt = self._prompt_template.format(
             title=video_info.title,
             description=video_info.description,
             has_subtitles=has_subtitles,
             subtitle_preview=subtitle_preview,
+            text_source=text_source or "none",
         )
 
         messages = [
@@ -75,7 +88,7 @@ class AnalyzerAgent:
             is_long = subtitles is not None and len(subtitles) > threshold
             if is_long:
                 logger.info(
-                    "Video %s has long subtitles (%d chars > %d), indexing to ChromaDB",
+                    "Video %s has long text (%d chars > %d), indexing to ChromaDB",
                     video_id, len(subtitles), threshold,
                 )
                 index_subtitles(
@@ -85,24 +98,53 @@ class AnalyzerAgent:
                     subtitles=subtitles,
                 )
 
-            logger.info("Video %s is summarizable (long=%s)", video_id, is_long)
+            logger.info("Video %s is summarizable (long=%s, source=%s)", video_id, is_long, text_source)
             return {
                 "can_summarize": True,
                 "video_info": video_info,
                 "subtitles": subtitles,
                 "is_long_video": is_long,
+                "text_source": text_source,
                 "reason": None,
             }
 
-        reason = result.get("reason", "该视频暂无字幕，无法生成摘要。")
+        reason = result.get("reason", "该视频暂无字幕且语音转录失败，无法生成摘要。")
         logger.info("Video %s not summarizable: %s", video_id, reason)
         return {
             "can_summarize": False,
             "video_info": video_info,
             "subtitles": None,
             "is_long_video": False,
+            "text_source": None,
             "reason": reason,
         }
+
+    async def _try_transcribe(self, video_id: str) -> str | None:
+        """尝试通过音频转录获取视频文本（降级策略）"""
+        # 检查 SenseVoice API 是否配置
+        if not settings.sensevoice.api_url:
+            logger.info("SenseVoice API not configured, skipping transcription for %s", video_id)
+            return None
+
+        # 获取音频 URL
+        audio_url = await self._platform.get_audio_url(video_id)
+        if not audio_url:
+            logger.info("Cannot get audio URL for video %s", video_id)
+            return None
+
+        # 下载音频到临时文件
+        audio_path = await download_audio(audio_url)
+        if not audio_path:
+            return None
+
+        try:
+            # 调用 SenseVoice API 转录
+            result = await transcribe(audio_path)
+            return result
+        finally:
+            # 确保临时文件被清理
+            audio_path.unlink(missing_ok=True)
+            logger.debug("Cleaned up temp audio file: %s", audio_path)
 
     @staticmethod
     def _parse_response(text: str) -> dict:

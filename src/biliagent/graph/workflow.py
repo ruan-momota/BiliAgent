@@ -6,6 +6,7 @@
                                                     → [no]  → reply → END
                        → [verify]        → verify_cache_judge → [hit]  → reply → END
                                                                → [miss] → verifier → reply → END
+                       → [ask]           → qa → reply → END
                        → [ignore]        → END
 """
 
@@ -16,6 +17,7 @@ import time
 from langgraph.graph import END, START, StateGraph
 
 from biliagent.agents.analyzer import AnalyzerAgent
+from biliagent.agents.qa import QAAgent
 from biliagent.agents.reply import ReplyAgent
 from biliagent.agents.summarizer import SummarizerAgent
 from biliagent.agents.supervisor import SupervisorAgent
@@ -107,6 +109,7 @@ async def analyzer_node(state: AgentState, platform: PlatformBase) -> AgentState
         state["has_subtitles"] = result.get("subtitles") is not None
         state["can_summarize"] = result["can_summarize"]
         state["is_long_video"] = result.get("is_long_video", False)
+        state["text_source"] = result.get("text_source")
         if not result["can_summarize"]:
             state["error"] = result.get("reason")
 
@@ -118,6 +121,7 @@ async def analyzer_node(state: AgentState, platform: PlatformBase) -> AgentState
                 "can_summarize": result["can_summarize"],
                 "has_subtitles": state["has_subtitles"],
                 "is_long_video": state.get("is_long_video", False),
+                "text_source": result.get("text_source"),
                 "title": result["video_info"].title if result["video_info"] else None,
             },
             duration,
@@ -270,8 +274,53 @@ async def verifier_node(state: AgentState, platform: PlatformBase) -> AgentState
     return state
 
 
+async def qa_node(state: AgentState, platform: PlatformBase) -> AgentState:
+    """QA 节点：RAG 检索 + LLM 生成回答"""
+    mention = state["mention"]
+    video_id = state["video_id"]
+    question = state.get("question") or mention.content
+    t0 = time.perf_counter()
+
+    try:
+        agent = QAAgent(platform)
+        result = await agent.run(
+            video_id=video_id,
+            question=question,
+            platform=mention.platform,
+        )
+
+        state["qa_answer"] = result["answer"]
+        state["qa_found"] = result["found"]
+        state["qa_chunks"] = result.get("chunks", [])
+        # 将视频信息挂到 state 上，供 Reply 环节使用标题
+        if result.get("video_info") is not None:
+            state["video_info"] = result["video_info"]
+
+        duration = int((time.perf_counter() - t0) * 1000)
+        _add_trace(
+            state, "qa",
+            {"video_id": video_id, "question": question},
+            {
+                "found": result["found"],
+                "chunks_count": len(result.get("chunks", [])),
+                "answer_length": len(result["answer"]),
+            },
+            duration,
+        )
+    except Exception as e:
+        duration = int((time.perf_counter() - t0) * 1000)
+        state["qa_answer"] = None
+        state["qa_found"] = False
+        state["qa_chunks"] = []
+        state["error"] = str(e)
+        _add_trace(state, "qa", None, None, duration, "failed", str(e))
+        logger.exception("QA node failed")
+
+    return state
+
+
 async def reply_node(state: AgentState, platform: PlatformBase) -> AgentState:
-    """Reply 节点：格式化并发布评论（支持总结和鉴别两种模式）"""
+    """Reply 节点：格式化并发布评论（支持总结、鉴别、问答三种模式）"""
     t0 = time.perf_counter()
 
     try:
@@ -281,8 +330,9 @@ async def reply_node(state: AgentState, platform: PlatformBase) -> AgentState:
         mention = state["mention"]
         user_name = mention.user_name or ""
 
-        # 判断是鉴别回复还是总结回复
-        is_verify = state.get("route") == "verify"
+        route = state.get("route")
+        is_verify = route == "verify"
+        is_qa = route == "ask"
 
         if is_verify:
             # 鉴别回复
@@ -299,6 +349,20 @@ async def reply_node(state: AgentState, platform: PlatformBase) -> AgentState:
                 is_verify=True,
                 verification=verification,
                 opinion=opinion,
+            )
+        elif is_qa:
+            # 问答回复
+            qa_answer = state.get("qa_answer")
+            qa_found = state.get("qa_found", False)
+
+            agent = ReplyAgent(platform)
+            result = await agent.run(
+                video_id=video_id,
+                title=title,
+                user_name=user_name,
+                is_qa=True,
+                qa_answer=qa_answer,
+                qa_found=qa_found,
             )
         else:
             # 总结回复
@@ -323,7 +387,7 @@ async def reply_node(state: AgentState, platform: PlatformBase) -> AgentState:
         duration = int((time.perf_counter() - t0) * 1000)
         _add_trace(
             state, "reply",
-            {"is_verify": is_verify},
+            {"is_verify": is_verify, "is_qa": is_qa},
             {"parts_count": len(result["reply_parts"]), "success": result["success"]},
             duration,
         )
@@ -348,6 +412,8 @@ def route_after_supervisor(state: AgentState) -> str:
         return "analyzer"
     elif route == "verify":
         return "verify_cache_judge"
+    elif route == "ask":
+        return "qa"
     else:
         return END
 
@@ -382,6 +448,9 @@ def build_workflow(platform: PlatformBase) -> StateGraph:
     async def _verifier(state: AgentState) -> AgentState:
         return await verifier_node(state, platform)
 
+    async def _qa(state: AgentState) -> AgentState:
+        return await qa_node(state, platform)
+
     async def _reply(state: AgentState) -> AgentState:
         return await reply_node(state, platform)
 
@@ -390,16 +459,18 @@ def build_workflow(platform: PlatformBase) -> StateGraph:
     graph.add_node("summarizer", summarizer_node)
     graph.add_node("verify_cache_judge", verify_cache_judge_node)
     graph.add_node("verifier", _verifier)
+    graph.add_node("qa", _qa)
     graph.add_node("reply", _reply)
 
     # 边：START → supervisor
     graph.add_edge(START, "supervisor")
 
-    # 条件边：supervisor → reply / analyzer / verify_cache_judge / END
+    # 条件边：supervisor → reply / analyzer / verify_cache_judge / qa / END
     graph.add_conditional_edges("supervisor", route_after_supervisor, {
         "reply": "reply",
         "analyzer": "analyzer",
         "verify_cache_judge": "verify_cache_judge",
+        "qa": "qa",
         END: END,
     })
 
@@ -420,6 +491,9 @@ def build_workflow(platform: PlatformBase) -> StateGraph:
 
     # 边：verifier → reply
     graph.add_edge("verifier", "reply")
+
+    # 边：qa → reply
+    graph.add_edge("qa", "reply")
 
     # 边：reply → END
     graph.add_edge("reply", END)

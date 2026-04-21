@@ -8,10 +8,13 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import func, select
 
+import json
+
 from biliagent.models.schemas import (
     AgentTraceInfo,
     CommentResponse,
     MentionInfo,
+    QAInfoResponse,
     StatsResponse,
     SummaryResponse,
     TaskDetailResponse,
@@ -99,6 +102,9 @@ async def get_task_detail(task_id: int):
         summary_row = summary_result.scalar_one_or_none()
         summary = SummaryResponse.model_validate(summary_row) if summary_row else None
 
+        # 从 qa trace 提取问答信息（若该任务走了 ask 路径）
+        qa_info = _extract_qa_info(traces)
+
         return TaskDetailResponse(
             id=task.id,
             platform=task.platform,
@@ -111,7 +117,45 @@ async def get_task_detail(task_id: int):
             traces=traces,
             comments=comments,
             summary=summary,
+            qa_info=qa_info,
         )
+
+
+def _extract_qa_info(traces: list[AgentTraceInfo]) -> QAInfoResponse | None:
+    """从 qa agent 的 trace 中解析出问答详情（供 Dashboard 展示）"""
+    qa_trace = next((t for t in traces if t.agent_name == "qa"), None)
+    if qa_trace is None:
+        return None
+
+    question: str | None = None
+    answer: str | None = None
+    found = False
+    chunks_count = 0
+
+    try:
+        if qa_trace.input_data:
+            inp = json.loads(qa_trace.input_data)
+            question = inp.get("question")
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    try:
+        if qa_trace.output_data:
+            out = json.loads(qa_trace.output_data)
+            found = bool(out.get("found", False))
+            chunks_count = int(out.get("chunks_count", 0))
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    # 回答正文实际在 reply 阶段写入 comments，这里从 qa trace 的 answer_length 无法还原。
+    # 取最后一次 reply trace 下游 state 里没留正文，因此答案正文直接从 comments 列表中取第一楼。
+    # Dashboard 如需完整回答文本，沿用 comments 字段即可。
+    return QAInfoResponse(
+        question=question,
+        answer=answer,
+        found=found,
+        chunks_count=chunks_count,
+    )
 
 
 # ---- 统计概览 ----
