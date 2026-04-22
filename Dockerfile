@@ -1,26 +1,40 @@
-# ---- BiliAgent Backend ----
-FROM python:3.12-slim
+# ---- Builder: 装依赖、构建虚拟环境 ----
+FROM python:3.12-slim AS builder
 
-# Install uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 WORKDIR /app
 
-# Copy dependency files first (better cache)
-COPY pyproject.toml uv.lock ./
-COPY README.md ./
+ENV UV_LINK_MODE=copy \
+    UV_COMPILE_BYTECODE=1
 
-# Install dependencies
+COPY pyproject.toml uv.lock README.md ./
+
 RUN uv sync --frozen --no-dev --no-install-project
 
-# Copy source code
 COPY src/ src/
 
-# Install the project itself
 RUN uv sync --frozen --no-dev
 
-# Expose port
+# ---- Runner: 只含运行期依赖 ----
+FROM python:3.12-slim AS runner
+
+# onnxruntime (chromadb) 和 torch (sentence-transformers) 需要 libgomp
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY --from=builder /app/.venv /app/.venv
+COPY --from=builder /app/src /app/src
+COPY --from=builder /app/pyproject.toml /app/README.md ./
+
+# HF_HOME 指向挂载卷内目录，embedding 模型只在首次下载一次（~400MB）
+ENV PATH="/app/.venv/bin:$PATH" \
+    PYTHONUNBUFFERED=1 \
+    HF_HOME=/app/data/hf_cache
+
 EXPOSE 8000
 
-# Run with uvicorn
-CMD ["uv", "run", "uvicorn", "biliagent.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "biliagent.main:app", "--host", "0.0.0.0", "--port", "8000"]

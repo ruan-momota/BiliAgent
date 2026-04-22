@@ -246,7 +246,9 @@ uv run pytest tests/ -v
 | `QA_TOP_K` | RAG 检索返回片段数 | `5` |
 | `QA_MAX_LENGTH` | 问答回答最大字数 | `500` |
 | `SUBTITLE_HARD_LIMIT` | 平台层字幕极端安全上限（防 OOM） | `200000` |
-| `DATABASE_URL` | 数据库连接 | `sqlite+aiosqlite:///./biliagent.db` |
+| `DATABASE_URL` | 数据库连接 | `sqlite+aiosqlite:////app/data/biliagent.db` |
+| `CORS_ORIGINS` | 允许跨域的前端 URL（逗号分隔） | `http://localhost:3000` |
+| `NEXT_PUBLIC_API_BASE` | Dashboard 构建时的后端 API 地址（留空＝同源） | `` |
 
 ## License
 

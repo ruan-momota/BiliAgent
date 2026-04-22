@@ -8,18 +8,36 @@ services:
     env_file:
       - .env
     volumes:
+      # 同时持久化 SQLite、ChromaDB、HuggingFace 模型缓存
       - ./data:/app/data
-    environment:
-      - DATABASE_URL=sqlite+aiosqlite:///./data/biliagent.db
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      # 首次启动需要加载 embedding 模型，给足启动窗口
+      start_period: 120s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
 
   dashboard:
     build:
       context: ./dashboard
       args:
-        NEXT_PUBLIC_API_BASE: ""
+        # 由 .env 或宿主环境提供，留空则前端从同源发请求（需反向代理）
+        NEXT_PUBLIC_API_BASE: ${NEXT_PUBLIC_API_BASE:-}
     container_name: biliagent-dashboard
     restart: unless-stopped
     ports:
       - "3000:3000"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"

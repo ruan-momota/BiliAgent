@@ -5,5 +5,7 @@ __pycache__
 *.pyc
 *.db
 .env
+data/
 dashboard/
 node_modules/
+tests/

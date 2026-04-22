@@ -62,6 +62,8 @@ class AppSettings(BaseSettings):
         default="sqlite+aiosqlite:////app/data/biliagent.db",
         alias="DATABASE_URL",
     )
+    # 允许跨域的前端来源（逗号分隔），生产环境必须设置为 dashboard 的访问 URL
+    cors_origins: str = Field(default="http://localhost:3000", alias="CORS_ORIGINS")
 
 
 class Settings(BaseSettings):
