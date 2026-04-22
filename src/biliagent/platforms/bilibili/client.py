@@ -196,11 +196,15 @@ class BilibiliPlatform(PlatformBase):
             # 下载字幕 JSON 并拼接文本
             text = await self._fetch_subtitle_text(subtitle_url)
 
-            # 截断超长字幕
-            max_len = settings.app.subtitle_max_length
-            if text and len(text) > max_len:
-                text = text[:max_len] + "...(truncated)"
-                logger.info("Subtitle truncated to %d chars for video %s", max_len, video_id)
+            # 极端安全上限：防止异常长字幕拖垮内存/索引。远高于 RAG long_video_threshold，
+            # 正常长视频不会触发；触发即视为异常数据，由下游决定是否继续处理。
+            hard_limit = settings.rag.subtitle_hard_limit
+            if text and len(text) > hard_limit:
+                logger.warning(
+                    "Subtitle exceeds hard limit (%d > %d) for video %s, truncating",
+                    len(text), hard_limit, video_id,
+                )
+                text = text[:hard_limit]
 
             return text
         except Exception:

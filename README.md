@@ -235,7 +235,7 @@ uv run pytest tests/ -v
 | `MONITOR_INTERVAL` | @消息轮询间隔（秒） | `60` |
 | `SUMMARY_MAX_LENGTH` | 摘要最大字数 | `500` |
 | `COMMENT_SEND_INTERVAL` | 评论发送间隔（秒） | `30` |
-| `SUBTITLE_MAX_LENGTH` | 字幕截断长度 | `15000` |
+| `SUBTITLE_MAX_LENGTH` | Verifier 的字幕 LLM 输入截断长度 | `15000` |
 | `FOLLOWER_CHECK_ENABLED` | 是否开启关注检查 | `true` |
 | `VERIFY_MAX_LENGTH` | 鉴别评论最大字数 | `500` |
 | `CHROMA_PERSIST_DIR` | ChromaDB 持久化目录 | `./data/chroma` |
@@ -245,6 +245,7 @@ uv run pytest tests/ -v
 | `LONG_VIDEO_THRESHOLD` | 触发 Map-Reduce 的字幕长度 | `15000` |
 | `QA_TOP_K` | RAG 检索返回片段数 | `5` |
 | `QA_MAX_LENGTH` | 问答回答最大字数 | `500` |
+| `SUBTITLE_HARD_LIMIT` | 平台层字幕极端安全上限（防 OOM） | `200000` |
 | `DATABASE_URL` | 数据库连接 | `sqlite+aiosqlite:///./biliagent.db` |
 
 ## License

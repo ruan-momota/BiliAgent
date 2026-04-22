@@ -34,6 +34,8 @@ class RAGSettings(BaseSettings):
     long_video_threshold: int = Field(default=15000, alias="LONG_VIDEO_THRESHOLD")
     qa_top_k: int = Field(default=5, alias="QA_TOP_K")
     qa_max_length: int = Field(default=500, alias="QA_MAX_LENGTH")
+    # 平台层字幕极端安全上限（防 OOM / 超大 payload），远高于 long_video_threshold
+    subtitle_hard_limit: int = Field(default=200000, alias="SUBTITLE_HARD_LIMIT")
 
 
 class SenseVoiceSettings(BaseSettings):
