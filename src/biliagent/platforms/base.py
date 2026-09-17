@@ -46,6 +46,17 @@ class PlatformBase(ABC):
         ...
 
     @abstractmethod
+    async def get_audio_url(self, video_id: str) -> str | None:
+        """获取视频音频流 URL（供语音转文字降级使用）
+
+        Args:
+            video_id: 视频唯一标识
+        Returns:
+            音频流 URL，无法获取时返回 None
+        """
+        ...
+
+    @abstractmethod
     async def post_comment(self, video_id: str, text: str) -> str | None:
         """在视频下发布一级评论
 

@@ -3,14 +3,16 @@
 ## 输入信息
 - 视频标题：{title}
 - 视频简介：{description}
-- 字幕是否可用：{has_subtitles}
-- 字幕内容预览（前200字）：{subtitle_preview}
+- 文本是否可用：{has_subtitles}
+- 文本来源：{text_source}（subtitle=平台字幕, transcription=语音转录, none=无文本）
+- 文本内容预览（前200字）：{subtitle_preview}
 
 ## 判断规则
-1. 如果有字幕且内容有实质意义（非纯音乐、纯噪音），判定为 **can_summarize**。
-2. 如果没有字幕，判定为 **no_subtitles**，并给出友好的原因说明。
-3. 如果字幕内容过于碎片化或无意义，判定为 **low_quality**，并给出原因。
+1. 如果有文本（无论来源是字幕还是语音转录）且内容有实质意义（非纯音乐、纯噪音），判定为 **can_summarize**。
+2. 如果没有任何可用文本，判定为 **no_subtitles**，并给出友好的原因说明。
+3. 如果文本内容过于碎片化或无意义，判定为 **low_quality**，并给出原因。
+4. 语音转录文本可能存在识别误差，只要大体可读即可判定为 can_summarize。
 
 ## 输出格式
 严格按以下 JSON 格式输出，不要输出任何其他内容：
-{{"result": "can_summarize"}} 或 {{"result": "no_subtitles", "reason": "该视频暂无字幕，无法生成摘要"}} 或 {{"result": "low_quality", "reason": "具体原因"}}
+{{"result": "can_summarize"}} 或 {{"result": "no_subtitles", "reason": "该视频暂无字幕且语音转录失败，无法生成摘要"}} 或 {{"result": "low_quality", "reason": "具体原因"}}

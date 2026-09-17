@@ -104,3 +104,50 @@ class TestSupervisorRun:
 
         assert result["route"] == "ignore"
         assert result["reason"] == "闲聊"
+
+    @pytest.mark.asyncio
+    @patch("biliagent.agents.supervisor.invoke_llm_with_retry")
+    @patch("biliagent.agents.supervisor.get_cached_summary")
+    async def test_ask_intent_routes_to_qa(self, mock_cache, mock_llm):
+        """LLM 判断为 ask → ask 路由，不查摘要缓存"""
+        mock_llm.return_value = (
+            '{"action": "ask", "question": "视频里提到的 XX 策略具体怎么操作"}'
+        )
+
+        agent = SupervisorAgent.__new__(SupervisorAgent)
+        agent._llm = MagicMock()
+        agent._prompt_template = "test prompt {content} {user_name}"
+
+        result = await agent.run(
+            content="视频里提到的 XX 策略具体怎么操作",
+            user_name="test_user",
+            video_id="BV123",
+            platform="bilibili",
+        )
+
+        assert result["route"] == "ask"
+        assert "XX" in result["question"]
+        assert result["cached_summary"] is None
+        # ask 意图不应查摘要缓存
+        mock_cache.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch("biliagent.agents.supervisor.invoke_llm_with_retry")
+    @patch("biliagent.agents.supervisor.get_cached_summary")
+    async def test_ask_without_question_falls_back_to_content(self, mock_cache, mock_llm):
+        """ask 动作没带 question 时，用原始 content 兜底"""
+        mock_llm.return_value = '{"action": "ask"}'
+
+        agent = SupervisorAgent.__new__(SupervisorAgent)
+        agent._llm = MagicMock()
+        agent._prompt_template = "test prompt {content} {user_name}"
+
+        result = await agent.run(
+            content="那段数据的来源是什么",
+            user_name="test_user",
+            video_id="BV123",
+            platform="bilibili",
+        )
+
+        assert result["route"] == "ask"
+        assert result["question"] == "那段数据的来源是什么"

@@ -68,6 +68,16 @@ class SupervisorAgent:
                 "reason": None,
             }
 
+        if result.get("action") == "ask":
+            question = result.get("question", content)
+            logger.info("Routing to qa for %s:%s", platform, video_id)
+            return {
+                "route": "ask",
+                "cached_summary": None,
+                "question": question,
+                "reason": None,
+            }
+
         # 2. summarize 意图：先查摘要缓存
         cached = await get_cached_summary(platform, video_id)
         if cached is not None:

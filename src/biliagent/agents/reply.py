@@ -41,6 +41,12 @@ class ReplyAgent:
         "neutral": "（以上仅代表本课代表个人观点哦~ [傲娇]）",
     }
 
+    # 傲娇话术模板 — 问答
+    _QA_FOUND_HEADER = "哼，这种问题也要来问我？算了，看你这么好奇就告诉你吧！"
+    _QA_FOUND_FOOTER = "（视频里明明说了嘛，下次认真看！[嫌弃]）"
+    _QA_MISSING_HEADER = "这个嘛...视频里好像没怎么提到欸 [思考]"
+    _QA_MISSING_FOOTER = "（不是我不帮你，是这个UP主确实没讲这块内容，建议去评论区问UP主本人吧~）"
+
     async def run(
         self,
         video_id: str,
@@ -52,6 +58,9 @@ class ReplyAgent:
         is_verify: bool = False,
         verification: str | None = None,
         opinion: str | None = None,
+        is_qa: bool = False,
+        qa_answer: str | None = None,
+        qa_found: bool = False,
     ) -> dict:
         """格式化并发布评论
 
@@ -72,6 +81,20 @@ class ReplyAgent:
             formatted_text = (
                 f"{at_prefix}{header}\n\n"
                 f"{verification}\n\n"
+                f"{footer}"
+            )
+        elif is_qa:
+            # 问答回复：直接使用 QA Agent 已生成的回答，按"找到/未找到"包裹话术
+            answer_body = qa_answer or "未能生成回答。"
+            if qa_found:
+                header = self._QA_FOUND_HEADER
+                footer = self._QA_FOUND_FOOTER
+            else:
+                header = self._QA_MISSING_HEADER
+                footer = self._QA_MISSING_FOOTER
+            formatted_text = (
+                f"{at_prefix}{header}\n\n"
+                f"{answer_body}\n\n"
                 f"{footer}"
             )
         else:

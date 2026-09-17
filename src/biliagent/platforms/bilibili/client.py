@@ -196,11 +196,15 @@ class BilibiliPlatform(PlatformBase):
             # 下载字幕 JSON 并拼接文本
             text = await self._fetch_subtitle_text(subtitle_url)
 
-            # 截断超长字幕
-            max_len = settings.app.subtitle_max_length
-            if text and len(text) > max_len:
-                text = text[:max_len] + "...(truncated)"
-                logger.info("Subtitle truncated to %d chars for video %s", max_len, video_id)
+            # 极端安全上限：防止异常长字幕拖垮内存/索引。远高于 RAG long_video_threshold，
+            # 正常长视频不会触发；触发即视为异常数据，由下游决定是否继续处理。
+            hard_limit = settings.rag.subtitle_hard_limit
+            if text and len(text) > hard_limit:
+                logger.warning(
+                    "Subtitle exceeds hard limit (%d > %d) for video %s, truncating",
+                    len(text), hard_limit, video_id,
+                )
+                text = text[:hard_limit]
 
             return text
         except Exception:
@@ -241,6 +245,33 @@ class BilibiliPlatform(PlatformBase):
             return None
         except Exception:
             logger.exception("Failed to fetch subtitle from %s", url)
+            return None
+
+    # ---- 音频 ----
+    async def get_audio_url(self, video_id: str) -> str | None:
+        """获取视频音频流 URL（DASH 格式最高码率音频）"""
+        try:
+            video = self._make_video(video_id)
+            download_info = await video.get_download_url(page_index=0)
+            dash = download_info.get("dash")
+            if not dash:
+                logger.info("No DASH info for video %s", video_id)
+                return None
+
+            audio_list = dash.get("audio") or []
+            if not audio_list:
+                logger.info("No audio streams for video %s", video_id)
+                return None
+
+            # 按码率降序，取最高码率的音频流
+            best = max(audio_list, key=lambda a: a.get("bandwidth", 0))
+            url = best.get("baseUrl") or best.get("base_url", "")
+            if url:
+                logger.info("Audio URL obtained for video %s, bandwidth=%d", video_id, best.get("bandwidth", 0))
+            return url or None
+
+        except Exception:
+            logger.exception("Failed to get audio URL for video %s", video_id)
             return None
 
     # ---- 评论 ----
